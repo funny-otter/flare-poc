@@ -59,7 +59,12 @@ The script takes ~2–4 minutes to complete due to the voting round finalization
 
 ## Resources
 
-- [FDC documentation](https://dev.flare.network/fdc/overview)
+- [FDC overview](https://dev.flare.network/fdc/overview)
+- [FDC usage guides](https://dev.flare.network/fdc/guides)
+- Attestation types:
+  - [EVMTransaction](https://dev.flare.network/fdc/attestation-types/evm-transaction)
+  - [Payment](https://dev.flare.network/fdc/attestation-types/payment)
+- [Flare State Protocol (security)](https://dev.flare.network/network/fsp)
 - [Flare TX SDK](https://www.npmjs.com/package/@flarenetwork/flare-tx-sdk)
 - [Coston2 faucet](https://faucet.flare.network/coston2)
 - [Coston2 explorer](https://coston2-explorer.flare.network)
