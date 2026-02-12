@@ -1,0 +1,40 @@
+{
+  "cli_version": "0.4.2",
+  "checkpoint_id": "65e0e2768e03",
+  "strategy": "manual-commit",
+  "branch": "feat/fdc-trusted-relayer-sapphire-accounting",
+  "checkpoints_count": 5,
+  "files_touched": [
+    "fdc-trusted-relayer/README.md",
+    "fdc-trusted-relayer/contracts/hardhat.config.ts",
+    "fdc-trusted-relayer/contracts/src/FdcAccounting.sol",
+    "fdc-trusted-relayer/src/accounting-demo.ts",
+    "openspec/changes/archive/2026-02-12-fdc-encumbered-wallet/.openspec.yaml",
+    "openspec/changes/archive/2026-02-12-fdc-encumbered-wallet/design.md",
+    "openspec/changes/archive/2026-02-12-fdc-encumbered-wallet/proposal.md",
+    "openspec/changes/archive/2026-02-12-fdc-encumbered-wallet/specs/deposit-validation/spec.md",
+    "openspec/changes/archive/2026-02-12-fdc-encumbered-wallet/specs/encumbered-wallet/spec.md",
+    "openspec/changes/archive/2026-02-12-fdc-encumbered-wallet/specs/sapphire-accounting/spec.md",
+    "openspec/changes/archive/2026-02-12-fdc-encumbered-wallet/tasks.md",
+    "openspec/changes/fdc-encumbered-wallet/tasks.md",
+    "openspec/specs/deposit-validation/spec.md",
+    "openspec/specs/encumbered-wallet/spec.md",
+    "openspec/specs/sapphire-accounting/spec.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/65/e0e2768e03/0/metadata.json",
+      "transcript": "/65/e0e2768e03/0/full.jsonl",
+      "context": "/65/e0e2768e03/0/context.md",
+      "content_hash": "/65/e0e2768e03/0/content_hash.txt",
+      "prompt": "/65/e0e2768e03/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 105,
+    "cache_creation_tokens": 72511,
+    "cache_read_tokens": 5042672,
+    "output_tokens": 10528,
+    "api_call_count": 83
+  }
+}
