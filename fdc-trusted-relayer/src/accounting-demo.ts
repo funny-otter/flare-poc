@@ -2,14 +2,15 @@
  * FDC Trusted Relayer — Sapphire Accounting Demo
  *
  * Fully self-contained end-to-end flow:
- * 0. Send a small ETH transfer to self on Sepolia (creates the tx to attest)
- * 1. Deploy FdcAccounting contract on Sapphire (or connect to existing)
- * 2. Prepare FDC attestation request for the Sepolia tx
- * 3. Submit attestation request to FdcHub on Coston2
- * 4. Wait for proof availability
- * 5. Verify the Merkle proof on-chain
- * 6. Relay verified deposit to the Sapphire accounting contract
- * 7. Query the depositor's private balance
+ * 0. Deploy FdcAccounting contract on Sapphire (generates encumbered wallet)
+ * 1. Query the deposit address (encumbered wallet's Ethereum address)
+ * 2. Send ETH to the deposit address on Sepolia
+ * 3. Prepare FDC attestation request for the Sepolia tx
+ * 4. Submit attestation request to FdcHub on Coston2
+ * 5. Wait for proof availability
+ * 6. Verify the Merkle proof on-chain
+ * 7. Relay verified deposit to the Sapphire accounting contract
+ * 8. Sign withdrawal on Sapphire and broadcast to Sepolia
  */
 
 import "dotenv/config";
@@ -194,13 +195,14 @@ function toBytes32String(s: string): string {
 
 async function sendSepoliaDeposit(
   sepoliaSigner: ethers.Wallet,
+  depositAddress: string,
   confirmations: number
 ): Promise<string> {
   const amount = ethers.parseEther(DEPOSIT_AMOUNT);
-  console.log(`  Sending ${DEPOSIT_AMOUNT} ETH to self on Sepolia...`);
+  console.log(`  Sending ${DEPOSIT_AMOUNT} ETH to deposit address ${depositAddress}...`);
 
   const tx = await sepoliaSigner.sendTransaction({
-    to: sepoliaSigner.address,
+    to: depositAddress,
     value: amount,
   });
   console.log(`  Sepolia tx: ${tx.hash}`);
@@ -477,14 +479,16 @@ async function relayToSapphire(
   const body = proofData.response.responseBody;
   const txHash = proofData.response.requestBody.transactionHash;
   const depositor = body.sourceAddress;
+  const receivingAddress = body.receivingAddress || ethers.ZeroAddress;
   const value = BigInt(body.value);
 
   console.log(`  Relaying deposit:`);
   console.log(`    TX hash:    ${txHash}`);
   console.log(`    Depositor:  ${depositor}`);
+  console.log(`    Receiving:  ${receivingAddress}`);
   console.log(`    Value:      ${ethers.formatEther(value)} ETH`);
 
-  const tx = await accountingContract.creditDeposit(txHash, depositor, value);
+  const tx = await accountingContract.creditDeposit(txHash, depositor, receivingAddress, value);
   console.log(`  Sapphire tx: ${tx.hash}`);
 
   const receipt = await tx.wait(1);
@@ -496,6 +500,67 @@ async function relayToSapphire(
   // Query the depositor's balance
   const balance = await accountingContract.getBalanceOf(depositor);
   console.log(`  Depositor balance: ${ethers.formatEther(balance)} ETH`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Step 7: Sign and Broadcast Withdrawal
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function signAndBroadcastWithdrawal(
+  accountingContract: ethers.Contract,
+  sepoliaProvider: ethers.JsonRpcProvider,
+  user: string,
+  amount: bigint,
+  chainId: bigint
+): Promise<string> {
+  // Get current gas price and nonce from Sepolia
+  const depositAddress = await accountingContract.getDepositAddress();
+  const [gasPrice, nonce] = await Promise.all([
+    sepoliaProvider.getFeeData().then((f) => f.gasPrice ?? 0n),
+    sepoliaProvider.getTransactionCount(depositAddress),
+  ]);
+
+  console.log(`  Withdrawal details:`);
+  console.log(`    User:       ${user}`);
+  console.log(`    Amount:     ${ethers.formatEther(amount)} ETH`);
+  console.log(`    Gas price:  ${ethers.formatUnits(gasPrice, "gwei")} gwei`);
+  console.log(`    Nonce:      ${nonce}`);
+
+  // staticCall to get the signed tx bytes (doesn't mutate state)
+  const signedTx: string = await accountingContract.signWithdrawal.staticCall(
+    user,
+    amount,
+    gasPrice,
+    nonce,
+    chainId
+  );
+  console.log(`  Signed tx bytes: ${signedTx.slice(0, 42)}...`);
+
+  // Real call to debit the balance on-chain
+  const debitTx = await accountingContract.signWithdrawal(
+    user,
+    amount,
+    gasPrice,
+    nonce,
+    chainId
+  );
+  const debitReceipt = await debitTx.wait(1);
+  if (!debitReceipt || debitReceipt.status !== 1) {
+    throw new Error(`signWithdrawal reverted: ${debitTx.hash}`);
+  }
+  console.log(`  Balance debited on Sapphire: ${debitTx.hash}`);
+
+  // Broadcast the signed transaction to Sepolia
+  const broadcastResponse = await sepoliaProvider.broadcastTransaction(signedTx);
+  console.log(`  Broadcast to Sepolia: ${broadcastResponse.hash}`);
+
+  const broadcastReceipt = await broadcastResponse.wait(1);
+  if (!broadcastReceipt || broadcastReceipt.status !== 1) {
+    throw new Error(`Withdrawal tx reverted on Sepolia: ${broadcastResponse.hash}`);
+  }
+  console.log(`  Withdrawal confirmed on Sepolia in block ${broadcastReceipt.blockNumber}`);
+
+  return broadcastResponse.hash;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -551,28 +616,35 @@ async function main() {
   console.log(`Sapphire wallet:   ${await sapphireSigner.getAddress()}`);
   console.log(`Deposit amount:    ${DEPOSIT_AMOUNT} ETH`);
 
-  // Step 0: Send ETH to self on Sepolia
+  // Step 0: Deploy or connect to FdcAccounting on Sapphire
   console.log(`\n${"─".repeat(70)}`);
-  console.log(`Step 0: Send deposit tx on Sepolia`);
-  console.log(`${"─".repeat(70)}`);
-  const sepoliaTxHash = await sendSepoliaDeposit(sepoliaSigner, requiredConfirmations);
-
-  // Step 1: Deploy or connect to FdcAccounting on Sapphire
-  console.log(`\n${"─".repeat(70)}`);
-  console.log(`Step 1: Deploy/connect FdcAccounting on Sapphire`);
+  console.log(`Step 0: Deploy/connect FdcAccounting on Sapphire`);
   console.log(`${"─".repeat(70)}`);
   const accountingContract = await deployOrConnect(sapphireSigner);
 
-  // Step 2: Prepare attestation request
+  // Step 1: Query deposit address from contract
   console.log(`\n${"─".repeat(70)}`);
-  console.log(`Step 2: Preparing attestation request`);
+  console.log(`Step 1: Query deposit address`);
+  console.log(`${"─".repeat(70)}`);
+  const depositAddress: string = await accountingContract.getDepositAddress();
+  console.log(`  Encumbered wallet (deposit address): ${depositAddress}`);
+
+  // Step 2: Send ETH to deposit address on Sepolia
+  console.log(`\n${"─".repeat(70)}`);
+  console.log(`Step 2: Send deposit tx on Sepolia`);
+  console.log(`${"─".repeat(70)}`);
+  const sepoliaTxHash = await sendSepoliaDeposit(sepoliaSigner, depositAddress, requiredConfirmations);
+
+  // Step 3: Prepare attestation request
+  console.log(`\n${"─".repeat(70)}`);
+  console.log(`Step 3: Preparing attestation request`);
   console.log(`${"─".repeat(70)}`);
   const abiEncodedRequest = await prepareAttestationRequest(sepoliaTxHash, requiredConfirmations);
   console.log(`  Request prepared (${abiEncodedRequest.length} hex chars)`);
 
-  // Step 3: Submit to FdcHub on Coston2
+  // Step 4: Submit to FdcHub on Coston2
   console.log(`\n${"─".repeat(70)}`);
-  console.log(`Step 3: Submitting attestation request to FdcHub`);
+  console.log(`Step 4: Submitting attestation request to FdcHub`);
   console.log(`${"─".repeat(70)}`);
   const { coston2TxHash, votingRoundId } = await submitAttestationRequest(
     coston2Signer,
@@ -581,15 +653,15 @@ async function main() {
   console.log(`  Coston2 TX: ${coston2TxHash}`);
   console.log(`  Voting round: ${votingRoundId}`);
 
-  // Step 4: Wait for proof
+  // Step 5: Wait for proof
   console.log(`\n${"─".repeat(70)}`);
-  console.log(`Step 4: Waiting for proof`);
+  console.log(`Step 5: Waiting for proof`);
   console.log(`${"─".repeat(70)}`);
   const proofData = await waitForProof(votingRoundId, abiEncodedRequest);
 
-  // Step 5: Verify on-chain
+  // Step 6: Verify on-chain
   console.log(`\n${"─".repeat(70)}`);
-  console.log(`Step 5: On-chain verification via FdcVerification`);
+  console.log(`Step 6: On-chain verification via FdcVerification`);
   console.log(`${"─".repeat(70)}`);
   const isValid = await verifyOnChain(coston2Provider, proofData);
   if (!isValid) {
@@ -597,14 +669,39 @@ async function main() {
   }
   console.log(`  Verification PASSED`);
 
-  // Step 6: Relay to Sapphire
+  // Step 7: Relay to Sapphire
   console.log(`\n${"─".repeat(70)}`);
-  console.log(`Step 6: Relay deposit to Sapphire accounting contract`);
+  console.log(`Step 7: Relay deposit to Sapphire accounting contract`);
   console.log(`${"─".repeat(70)}`);
   await relayToSapphire(accountingContract, proofData);
 
+  // Step 8: Withdraw back to Sepolia
+  console.log(`\n${"─".repeat(70)}`);
+  console.log(`Step 8: Sign and broadcast withdrawal to Sepolia`);
+  console.log(`${"─".repeat(70)}`);
+  const depositAmount = ethers.parseEther(DEPOSIT_AMOUNT);
+  const gasPrice = (await sepoliaProvider.getFeeData()).gasPrice ?? 0n;
+  const gasCost = gasPrice * 21000n;
+  const withdrawalAmount = depositAmount - gasCost;
+  console.log(`  Deposit:    ${ethers.formatEther(depositAmount)} ETH`);
+  console.log(`  Gas cost:   ${ethers.formatEther(gasCost)} ETH`);
+  console.log(`  Withdrawal: ${ethers.formatEther(withdrawalAmount)} ETH`);
+
+  if (withdrawalAmount <= 0n) {
+    console.log(`  Skipping withdrawal — gas cost exceeds deposit amount`);
+  } else {
+    const sepoliaChainId = (await sepoliaProvider.getNetwork()).chainId;
+    await signAndBroadcastWithdrawal(
+      accountingContract,
+      sepoliaProvider,
+      sepoliaSigner.address,
+      withdrawalAmount,
+      sepoliaChainId
+    );
+  }
+
   console.log(`\n${"═".repeat(70)}`);
-  console.log(`  DONE — Deposit verified via FDC and credited on Sapphire`);
+  console.log(`  DONE — Full cycle: deposit → attest → verify → credit → withdraw`);
   console.log(`${"═".repeat(70)}\n`);
 }
 

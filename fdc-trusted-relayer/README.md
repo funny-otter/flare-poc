@@ -4,11 +4,13 @@ Cross-chain deposit accounting on Oasis Sapphire using Flare Data Connector (FDC
 
 ## How it works
 
-1. **Sepolia deposit** — Sends a small ETH transfer on Sepolia (the "deposit" to attest)
-2. **FDC attestation** — Submits an attestation request to FdcHub on Coston2 and waits for the voting round to finalize
-3. **On-chain verification** — Verifies the Merkle proof against Flare's consensus root via `FdcVerification`
-4. **Sapphire relay** — Calls `creditDeposit()` on the `FdcAccounting` contract deployed on Sapphire testnet
-5. **Balance query** — Reads the depositor's private balance from Sapphire confidential storage
+1. **Deploy contract** — Deploys `FdcAccounting` on Sapphire, which generates an encumbered wallet keypair (secp256k1) in confidential storage
+2. **Get deposit address** — Queries the encumbered wallet's Ethereum address from the contract — this is where users send deposits on Sepolia
+3. **Sepolia deposit** — Sends ETH to the deposit address on Sepolia
+4. **FDC attestation** — Submits an attestation request to FdcHub on Coston2 and waits for the voting round to finalize
+5. **On-chain verification** — Verifies the Merkle proof against Flare's consensus root via `FdcVerification`
+6. **Sapphire relay** — Calls `creditDeposit()` with `receivingAddress` validation to ensure the deposit went to the correct address
+7. **Withdrawal** — Signs a raw ETH transfer from the encumbered wallet using `EIP155Signer` on Sapphire, then broadcasts it to Sepolia
 
 ## Prerequisites
 
@@ -52,9 +54,11 @@ The demo is fully self-contained — it sends its own Sepolia tx, attests it, an
 
 `contracts/src/FdcAccounting.sol` — deployed on Sapphire with:
 
-- `creditDeposit(txHash, depositor, value)` — relayer-only, with double-credit and zero-value protection
-- `getBalance()` — depositor queries own balance (private storage)
-- `getBalanceOf(user)` — relayer queries any user's balance
+- Constructor generates an encumbered wallet keypair via `EthereumUtils.generateKeypair()`
+- `getDepositAddress()` — returns the encumbered wallet's Ethereum address (deposit target on Sepolia)
+- `creditDeposit(txHash, depositor, receivingAddress, value)` — relayer-only, validates `receivingAddress` matches the encumbered wallet
+- `signWithdrawal(user, amount, gasPrice, nonce, chainId)` — relayer-only, debits balance and returns EIP-155 signed tx bytes
+- `getBalance()` / `getBalanceOf(user)` — balance queries (private storage)
 
 ## Configuration
 
