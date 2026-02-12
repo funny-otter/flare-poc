@@ -1,0 +1,21 @@
+delete .qwen folder, it's not needed
+
+---
+
+should .entire add to git ignore?
+
+---
+
+yes
+
+---
+
+anything else that should be on gitignore
+
+---
+
+yes add
+
+---
+
+commit
