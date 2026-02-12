@@ -4,10 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "npx tsx src/poc.ts"
+    "start": "npx tsx src/poc.ts",
+    "accounting-demo": "npx tsx fdc-trusted-relayer/src/accounting-demo.ts"
   },
   "dependencies": {
     "@flarenetwork/flare-tx-sdk": "^1.4.0",
+    "@oasisprotocol/sapphire-paratime": "^1.3.2",
     "dotenv": "^16.4.7",
     "ethers": "^6.13.4"
   },

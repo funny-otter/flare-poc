@@ -1,9 +1,14 @@
 node_modules/
 dist/
+artifacts/
+cache/
+typechain-types/
 .env
 *.log
 .agents/
 .claude/
 .serena/
 .entire/
+.beads/
+AGENTS.md
 CLAUDE.md
