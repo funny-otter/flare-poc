@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.4.2",
+  "checkpoint_id": "ffa8110a6582",
+  "strategy": "manual-commit",
+  "branch": "master",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "docs/flexvaults-test.md",
+    "docs/rofl-header-oracle.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/ff/a8110a6582/0/metadata.json",
+      "transcript": "/ff/a8110a6582/0/full.jsonl",
+      "context": "/ff/a8110a6582/0/context.md",
+      "content_hash": "/ff/a8110a6582/0/content_hash.txt",
+      "prompt": "/ff/a8110a6582/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 68,
+    "cache_creation_tokens": 122889,
+    "cache_read_tokens": 1995340,
+    "output_tokens": 7270,
+    "api_call_count": 31
+  }
+}

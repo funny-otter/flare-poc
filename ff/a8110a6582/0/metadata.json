@@ -1,0 +1,31 @@
+{
+  "cli_version": "0.4.2",
+  "checkpoint_id": "ffa8110a6582",
+  "session_id": "4af872ed-84fc-4d05-8aa5-988fd632dd79",
+  "strategy": "manual-commit",
+  "created_at": "2026-02-12T11:37:22.448262111Z",
+  "branch": "master",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "docs/flexvaults-test.md",
+    "docs/rofl-header-oracle.md"
+  ],
+  "agent": "Claude Code",
+  "transcript_identifier_at_start": "1bae0237-4983-4fbf-aeee-ba4caa3fc649",
+  "token_usage": {
+    "input_tokens": 68,
+    "cache_creation_tokens": 122889,
+    "cache_read_tokens": 1995340,
+    "output_tokens": 7270,
+    "api_call_count": 31
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-02-12T11:37:22.306259145Z",
+    "agent_lines": 0,
+    "human_added": 2613,
+    "human_modified": 358,
+    "human_removed": 0,
+    "total_committed": 2971,
+    "agent_percentage": 0
+  }
+}
