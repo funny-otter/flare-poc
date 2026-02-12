@@ -1,0 +1,32 @@
+{
+  "cli_version": "0.4.2",
+  "checkpoint_id": "e13a28ca23ff",
+  "strategy": "manual-commit",
+  "branch": "feat/fdc-trusted-relayer-sapphire-accounting",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "fdc-trusted-relayer/.beads/.gitignore",
+    "fdc-trusted-relayer/.beads/README.md",
+    "fdc-trusted-relayer/.beads/config.yaml",
+    "fdc-trusted-relayer/.beads/interactions.jsonl",
+    "fdc-trusted-relayer/.beads/metadata.json",
+    "fdc-trusted-relayer/.gitattributes",
+    "fdc-trusted-relayer/AGENTS.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/e1/3a28ca23ff/0/metadata.json",
+      "transcript": "/e1/3a28ca23ff/0/full.jsonl",
+      "context": "/e1/3a28ca23ff/0/context.md",
+      "content_hash": "/e1/3a28ca23ff/0/content_hash.txt",
+      "prompt": "/e1/3a28ca23ff/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 25,
+    "cache_creation_tokens": 8470,
+    "cache_read_tokens": 346889,
+    "output_tokens": 534,
+    "api_call_count": 13
+  }
+}

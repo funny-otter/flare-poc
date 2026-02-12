@@ -1,0 +1,25 @@
+create a new folder fdc-trusted-relayer
+
+---
+
+install bd for this project
+
+---
+
+beads
+
+---
+
+[Request interrupted by user]
+
+---
+
+search at homebrew
+
+---
+
+bd doctor fix
+
+---
+
+remove it from brew and install it the official way curl -sSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash

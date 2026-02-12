@@ -1,0 +1,36 @@
+{
+  "cli_version": "0.4.2",
+  "checkpoint_id": "e13a28ca23ff",
+  "session_id": "8bb94796-08e3-4061-a42a-300448ab8b3e",
+  "strategy": "manual-commit",
+  "created_at": "2026-02-12T14:23:33.700517843Z",
+  "branch": "feat/fdc-trusted-relayer-sapphire-accounting",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "fdc-trusted-relayer/.beads/.gitignore",
+    "fdc-trusted-relayer/.beads/README.md",
+    "fdc-trusted-relayer/.beads/config.yaml",
+    "fdc-trusted-relayer/.beads/interactions.jsonl",
+    "fdc-trusted-relayer/.beads/metadata.json",
+    "fdc-trusted-relayer/.gitattributes",
+    "fdc-trusted-relayer/AGENTS.md"
+  ],
+  "agent": "Claude Code",
+  "transcript_identifier_at_start": "6a21cf73-4c96-4a3c-89cb-49c5708f92cb",
+  "token_usage": {
+    "input_tokens": 25,
+    "cache_creation_tokens": 8470,
+    "cache_read_tokens": 346889,
+    "output_tokens": 534,
+    "api_call_count": 13
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-02-12T14:23:33.687585788Z",
+    "agent_lines": 3,
+    "human_added": 9107,
+    "human_modified": 238,
+    "human_removed": 0,
+    "total_committed": 9348,
+    "agent_percentage": 0.03209242618741977
+  }
+}
