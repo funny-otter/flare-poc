@@ -1,0 +1,49 @@
+go in dir fdc-trusted-relayer
+
+---
+
+bd ready
+
+---
+
+start working on the tasks, update openspec on the go
+
+---
+
+bd ready
+
+---
+
+continue with next tasks
+
+---
+
+the address should have funds now
+
+---
+
+chekc again
+
+---
+
+can you update the work flow that the account sends eth to itself on sepolia, tracks the tx hash und uses this?
+
+---
+
+use same fallback as with sapphire
+
+---
+
+yes
+
+---
+
+yes close epic, and readme and commit
+
+---
+
+[Request interrupted by user]
+
+---
+
+close epic and readme, add .beads to gitignore
