@@ -6,6 +6,9 @@
     "compile": "hardhat compile",
     "clean": "hardhat clean"
   },
+  "dependencies": {
+    "@oasisprotocol/sapphire-contracts": "^0.2.15"
+  },
   "devDependencies": {
     "hardhat": "^2.22.0",
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
