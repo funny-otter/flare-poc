@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.4.2",
+  "checkpoint_id": "92940d69e5b6",
+  "strategy": "manual-commit",
+  "branch": "feat/fdc-trustless-merkle-verification",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "README.md",
+    "fdc-trustless-merkle/README.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/92/940d69e5b6/0/metadata.json",
+      "transcript": "/92/940d69e5b6/0/full.jsonl",
+      "context": "/92/940d69e5b6/0/context.md",
+      "content_hash": "/92/940d69e5b6/0/content_hash.txt",
+      "prompt": "/92/940d69e5b6/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 17,
+    "cache_creation_tokens": 20308,
+    "cache_read_tokens": 752435,
+    "output_tokens": 2719,
+    "api_call_count": 13
+  }
+}
