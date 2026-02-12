@@ -1,0 +1,32 @@
+{
+  "cli_version": "0.4.2",
+  "checkpoint_id": "370a39811ee9",
+  "session_id": "17184b5d-8b5f-4cf3-91a9-52a76fa8b8d3",
+  "strategy": "manual-commit",
+  "created_at": "2026-02-12T13:04:04.863079169Z",
+  "branch": "master",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "docs/openspec.md",
+    "docs/plan1.md",
+    "docs/plan2.md"
+  ],
+  "agent": "Claude Code",
+  "transcript_identifier_at_start": "94e63622-068f-4047-8b62-3a2ebec158a1",
+  "token_usage": {
+    "input_tokens": 31,
+    "cache_creation_tokens": 33119,
+    "cache_read_tokens": 1201350,
+    "output_tokens": 6266,
+    "api_call_count": 21
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-02-12T13:04:04.636880115Z",
+    "agent_lines": 468,
+    "human_added": 358,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 826,
+    "agent_percentage": 56.65859564164649
+  }
+}

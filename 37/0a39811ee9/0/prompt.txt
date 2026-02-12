@@ -1,0 +1,452 @@
+Implement the following plan:
+
+# Plan: FDC-based Encumbered Wallet Accounting PoC
+
+## Context
+
+FlexVaults verifies cross-chain deposits using: **ROFL Header Oracle** (TEE block relay) + **ShoyuBashi** (multi-oracle consensus) + **ProvethVerifier** (Merkle Patricia Trie on-chain proofs) + **Accounting.sol** — all running on Oasis Sapphire for privacy.
+
+This PoC proves Flare FDC can replace the ROFL + ShoyuBashi + ProvethVerifier stack while keeping accounting on Sapphire. Two approaches are explored below. Once approved, these will be written to `/docs/plan1.md` and `/docs/plan2.md`.
+
+---
+
+# Plan 1: Trusted Relayer Backend
+
+> File: `/docs/plan1.md`
+
+## Overview
+
+A TypeScript backend verifies the FDC proof on Coston2 (view call to `FdcVerification`), then submits the verified transaction data to a Sapphire accounting contract as an authorized signer. This mirrors FlexVaults' trust model (ROFL TEE backend → Sapphire contract) but replaces proof generation entirely with FDC.
+
+## Architecture
+
+```
+Sepolia                    Coston2 (Flare)              Oasis Sapphire
+┌──────────────┐           ┌─────────────────┐          ┌─────────────────────┐
+│ User sends   │           │ FDC attestation  │          │ FdcAccounting.sol   │
+│ ETH deposit  │           │ providers vote   │          │ (private balances)  │
+│              │           │                  │          │                     │
+│              │           │ FdcVerification   │          │ creditDeposit()     │
+│              │           │ .verifyEVM...()  │          │ getBalance()        │
+└──────┬───────┘           └────────┬─────────┘          └──────────┬──────────┘
+       │                           │                               │
+       │                    TypeScript Backend                     │
+       │              ┌─────────────────────────────┐              │
+       │              │ 1. Request FDC attestation   │              │
+       │              │ 2. Wait for proof (~2-3 min) │              │
+       │              │ 3. Verify on Coston2 (view)  │──── verify ─┘
+       │              │ 4. Submit to Sapphire        │──── credit ─┘
+       │              └─────────────────────────────┘
+```
+
+## Trust Model
+
+| Component | FlexVaults | This PoC |
+|---|---|---|
+| Proof generation | Python backend + `debug_getRawBlock` + HexaryTrie | FDC attestation providers (fully managed) |
+| Block hash trust | ROFL TEE → ROFLAdapter → ShoyuBashi | FDC decentralized voting (50%+ provider consensus) |
+| Proof verification | ProvethVerifier on Sapphire (~400 lines) | FdcVerification on Coston2 (1 view call) |
+| Backend trust anchor | ROFL TEE attestation (`onlyROFL` modifier) | Authorized signer (EOA or could be ROFL TEE) |
+| Balance privacy | Sapphire confidential compute | Sapphire confidential compute (same) |
+
+**Key tradeoff**: The backend is trusted to relay accurate FDC results. In production, this relayer could itself run inside a ROFL TEE for the same trust guarantees as FlexVaults, or a multisig/threshold scheme could be used. For the PoC, a simple authorized signer demonstrates the concept.
+
+## Sapphire Contract: `FdcAccounting.sol`
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract FdcAccounting {
+    address public immutable authorizedRelayer;
+
+    // Private balances (Sapphire confidential storage)
+    mapping(address depositor => uint256 balance) private balances;
+    mapping(bytes32 txHash => bool processed) public processedTxHashes;
+
+    event DepositCredited(address indexed depositor, uint256 amount, bytes32 indexed txHash);
+
+    error Unauthorized();
+    error AlreadyProcessed(bytes32 txHash);
+    error ZeroValue();
+
+    modifier onlyRelayer() {
+        if (msg.sender != authorizedRelayer) revert Unauthorized();
+        _;
+    }
+
+    constructor(address _relayer) {
+        authorizedRelayer = _relayer;
+    }
+
+    /// @notice Credit a deposit after the relayer has verified the FDC proof on Coston2.
+    /// @param txHash The Sepolia transaction hash (prevents double-crediting)
+    /// @param depositor The sender address on Sepolia (from FDC responseBody.sourceAddress)
+    /// @param value The ETH value in wei (from FDC responseBody.value)
+    function creditDeposit(
+        bytes32 txHash,
+        address depositor,
+        uint256 value
+    ) external onlyRelayer {
+        if (processedTxHashes[txHash]) revert AlreadyProcessed(txHash);
+        if (value == 0) revert ZeroValue();
+
+        processedTxHashes[txHash] = true;
+        balances[depositor] += value;
+
+        emit DepositCredited(depositor, value, txHash);
+    }
+
+    /// @notice Query balance (only callable by the depositor themselves for privacy)
+    function getBalance() external view returns (uint256) {
+        return balances[msg.sender];
+    }
+
+    /// @notice Relayer can query any balance (for operational purposes)
+    function getBalanceOf(address user) external view onlyRelayer returns (uint256) {
+        return balances[user];
+    }
+}
+```
+
+## TypeScript Backend Flow
+
+```typescript
+// src/accounting-demo.ts
+
+// Step 0: Connect to both chains
+const coston2Provider = new ethers.JsonRpcProvider(COSTON2_RPC);
+const sapphireProvider = sapphire.wrap(new ethers.JsonRpcProvider(SAPPHIRE_RPC));
+const signer = new ethers.Wallet(PRIVATE_KEY, sapphireProvider);
+
+// Step 1: Deploy FdcAccounting on Sapphire (or connect to existing)
+const accounting = await deployOrConnect(signer);
+
+// Step 2-4: FDC attestation on Coston2 (reuse from fdc.ts)
+const abiEncodedRequest = await prepareAttestationRequest(sepoliaTxHash);
+const { votingRoundId } = await submitAttestationRequest(coston2Signer, abiEncodedRequest);
+const proofData = await waitForProof(votingRoundId, abiEncodedRequest);
+
+// Step 5: Verify FDC proof on Coston2 (view call — no gas)
+const isValid = await verifyOnChain(coston2Provider, proofData);
+assert(isValid, "FDC proof invalid");
+
+// Step 6: Relay verified data to Sapphire
+const { sourceAddress, value } = proofData.response.responseBody;
+const txHash = proofData.response.requestBody.transactionHash;
+await accounting.creditDeposit(txHash, sourceAddress, BigInt(value));
+
+// Step 7: Query balance on Sapphire
+const balance = await accounting.getBalanceOf(sourceAddress);
+console.log(`Balance credited: ${ethers.formatEther(balance)} ETH`);
+```
+
+## Dependencies
+
+- Existing: ethers.js, @flarenetwork/flare-tx-sdk, dotenv, tsx
+- New: `@oasisprotocol/sapphire-paratime` (wraps ethers provider for Sapphire encrypted txs)
+- Hardhat in `contracts/` subdirectory (for Solidity compilation)
+
+## What This Proves
+
+1. FDC attestation provides all data FlexVaults needs (sender, receiver, value, status)
+2. No ROFL oracle, ShoyuBashi, or ProvethVerifier needed
+3. Accounting stays on Sapphire (private balances)
+4. Backend trust model is equivalent to FlexVaults (trusted relayer)
+
+## Limitations
+
+- Relayer is a simple EOA (FlexVaults uses ROFL TEE attestation)
+- No ERC-20 support (only native ETH)
+- No fund locking, transfers, or withdrawals (deposit crediting only)
+- The FDC proof is verified off-Sapphire (Coston2 view call), then relayed
+
+## Complexity
+
+- ~80 lines Solidity (vs ~1000+ lines in FlexVaults contracts)
+- ~200 lines TypeScript (vs ~600 lines Python backend in FlexVaults)
+- Zero infrastructure (vs ROFL TEE + oracle + Hashi)
+
+---
+
+# Plan 2: On-Chain Merkle Verification on Sapphire
+
+> File: `/docs/plan2.md`
+
+## Overview
+
+Port the FDC Merkle proof verification logic directly to Sapphire, so the accounting contract can verify FDC proofs without any trusted relayer or Coston2 interaction at transaction time. The FDC Merkle root is synced from Coston2 to Sapphire, and the contract verifies proofs locally.
+
+## Architecture
+
+```
+Sepolia                    Coston2 (Flare)              Oasis Sapphire
+┌──────────────┐           ┌─────────────────┐          ┌──────────────────────────┐
+│ User sends   │           │ FDC providers    │          │ FdcAccountingTrustless.sol│
+│ ETH deposit  │           │ vote on Merkle   │          │                          │
+│              │           │ root each round  │          │ verifyAndCredit(proof)   │
+│              │           │                  │          │ ├─ check Merkle root     │
+│              │           │ Relay contract   │          │ ├─ verify Merkle proof   │
+│              │           │ stores roots     │          │ └─ credit balance        │
+└──────┬───────┘           └────────┬─────────┘          └──────────┬───────────────┘
+       │                           │                               │
+       │                    TypeScript Backend                     │
+       │              ┌──────────────────────────────┐             │
+       │              │ 1. Request FDC attestation    │             │
+       │              │ 2. Wait for proof (~2-3 min)  │             │
+       │              │ 3. Sync Merkle root to        │─── root ───┘
+       │              │    Sapphire (if needed)        │
+       │              │ 4. Submit proof to Sapphire    │─── proof ──┘
+       │              │    (contract verifies locally) │
+       │              └──────────────────────────────┘
+```
+
+## How FDC Merkle Verification Works
+
+The FDC `FdcVerification` contract on Coston2 does three things:
+1. **Reconstruct the leaf**: Hash the attestation response data (tx details, block number, events, etc.) into a `bytes32` leaf
+2. **Compute the root**: Walk the Merkle proof path from leaf to root using `keccak256` hashing
+3. **Compare**: Check that the computed root matches the root stored in the `Relay` contract for that voting round
+
+To port this to Sapphire, we need:
+- The **leaf reconstruction** logic (hash the response struct)
+- The **Merkle proof walk** logic (standard binary Merkle tree)
+- A **root store** on Sapphire (synced from Coston2's Relay contract)
+
+## Trust Model
+
+| Component | FlexVaults | This PoC |
+|---|---|---|
+| Proof generation | Python backend | FDC protocol (managed) |
+| Block hash trust | ShoyuBashi multi-oracle | FDC Merkle root (50%+ provider consensus) |
+| Proof verification | ProvethVerifier on Sapphire | FDC Merkle verifier on Sapphire |
+| Root source | ROFL oracle relays block headers | Backend relays FDC Merkle roots |
+| Backend trust | ROFL TEE (for relay + proof gen) | Only relays roots (can't forge proofs) |
+| Balance privacy | Sapphire | Sapphire (same) |
+
+**Key advantage over Plan 1**: The backend only needs to relay Merkle roots — it cannot fabricate deposits because the Merkle proof must verify against the root. This is analogous to how FlexVaults trusts ShoyuBashi for block hashes but verifies proofs independently.
+
+**Key advantage over FlexVaults**: No ROFL TEE needed for proof generation. FDC handles proof generation off-chain. The Sapphire contract only needs ~50 lines of Merkle verification (vs ~400 lines of ProvethVerifier MPT logic).
+
+## Sapphire Contract: `FdcAccountingTrustless.sol`
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract FdcAccountingTrustless {
+    address public rootRelayer;       // Can only set Merkle roots (not forge proofs)
+    address public immutable depositAddress;
+
+    // FDC Merkle roots per voting round (synced from Coston2)
+    mapping(uint256 votingRound => bytes32 merkleRoot) public fdcRoots;
+
+    // Private balances
+    mapping(address depositor => uint256 balance) private balances;
+    mapping(bytes32 txHash => bool processed) public processedTxHashes;
+
+    event RootSynced(uint256 indexed votingRound, bytes32 merkleRoot);
+    event DepositCredited(address indexed depositor, uint256 amount, bytes32 indexed txHash);
+
+    constructor(address _rootRelayer, address _depositAddress) {
+        rootRelayer = _rootRelayer;
+        depositAddress = _depositAddress;
+    }
+
+    /// @notice Sync an FDC Merkle root from Coston2 (called by root relayer)
+    function syncRoot(uint256 votingRound, bytes32 merkleRoot) external {
+        require(msg.sender == rootRelayer, "Unauthorized");
+        require(fdcRoots[votingRound] == bytes32(0), "Root already set");
+        fdcRoots[votingRound] = merkleRoot;
+        emit RootSynced(votingRound, merkleRoot);
+    }
+
+    /// @notice Verify an FDC proof and credit the deposit — fully trustless
+    /// @param merkleProof The Merkle proof nodes from the FDC DA layer
+    /// @param attestationType bytes32 "EVMTransaction"
+    /// @param sourceId bytes32 "testETH"
+    /// @param votingRound The FDC voting round
+    /// @param lowestUsedTimestamp Timestamp from attestation
+    /// @param txHash The Sepolia tx hash
+    /// @param blockNumber Source chain block number
+    /// @param timestamp Source chain block timestamp
+    /// @param sourceAddress Sender on Sepolia
+    /// @param receivingAddress Receiver on Sepolia
+    /// @param value Wei transferred
+    /// @param status 1 = success
+    function verifyAndCredit(
+        bytes32[] calldata merkleProof,
+        bytes32 attestationType,
+        bytes32 sourceId,
+        uint64 votingRound,
+        uint64 lowestUsedTimestamp,
+        bytes32 txHash,
+        uint64 blockNumber,
+        uint64 timestamp,
+        address sourceAddress,
+        address receivingAddress,
+        uint256 value,
+        uint8 status
+    ) external {
+        // 1. Reconstruct the Merkle leaf (hash of the response data)
+        bytes32 leaf = keccak256(abi.encode(
+            attestationType, sourceId, votingRound, lowestUsedTimestamp,
+            txHash, blockNumber, timestamp, sourceAddress,
+            receivingAddress, value, status
+        ));
+
+        // 2. Verify Merkle proof against stored root
+        bytes32 root = fdcRoots[votingRound];
+        require(root != bytes32(0), "Root not synced for this round");
+        require(_verifyMerkleProof(merkleProof, root, leaf), "Invalid Merkle proof");
+
+        // 3. Validate deposit semantics
+        require(status == 1, "Tx not successful");
+        require(receivingAddress == depositAddress, "Wrong receiver");
+        require(!processedTxHashes[txHash], "Already processed");
+        require(value > 0, "Zero value");
+
+        // 4. Credit balance
+        processedTxHashes[txHash] = true;
+        balances[sourceAddress] += value;
+
+        emit DepositCredited(sourceAddress, value, txHash);
+    }
+
+    /// @notice Standard binary Merkle proof verification
+    function _verifyMerkleProof(
+        bytes32[] calldata proof,
+        bytes32 root,
+        bytes32 leaf
+    ) internal pure returns (bool) {
+        bytes32 computedHash = leaf;
+        for (uint256 i = 0; i < proof.length; i++) {
+            bytes32 proofElement = proof[i];
+            if (computedHash <= proofElement) {
+                computedHash = keccak256(abi.encodePacked(computedHash, proofElement));
+            } else {
+                computedHash = keccak256(abi.encodePacked(proofElement, computedHash));
+            }
+        }
+        return computedHash == root;
+    }
+
+    function getBalance() external view returns (uint256) {
+        return balances[msg.sender];
+    }
+}
+```
+
+## Research Required
+
+The leaf reconstruction (`keccak256(abi.encode(...))`) must exactly match how FDC's `FdcVerification` contract constructs the leaf. This needs investigation:
+
+1. **Leaf encoding**: Read the `FdcVerification` source or the Flare FDC spec to understand exact leaf encoding. It may include the full `RequestBody` and `ResponseBody` structs (including events, input data), not just the flat fields above.
+
+2. **Merkle tree convention**: FDC may use a specific sorted/unsorted convention for internal nodes. The `_verifyMerkleProof` above uses sorted pairs (OpenZeppelin convention). FDC might differ.
+
+3. **Root source on Coston2**: The Merkle root is stored in the `Relay` contract. We need the exact function to read it (`getConfirmedMerkleRoot(votingRound)` or similar).
+
+These can be investigated by:
+- Reading the FdcVerification source code on Coston2 block explorer
+- Checking the Flare FDC documentation/spec
+- Testing with a known proof: compute the leaf ourselves and verify it produces the right root
+
+## TypeScript Backend Flow
+
+```typescript
+// Step 1-4: Same FDC attestation flow as Plan 1
+
+// Step 5: Sync Merkle root to Sapphire (if not already synced)
+//   Read root from Coston2 Relay contract for this voting round
+//   Call accounting.syncRoot(votingRound, root) on Sapphire
+const relay = new ethers.Contract(RELAY_ADDRESS, RELAY_ABI, coston2Provider);
+const root = await relay.getConfirmedMerkleRoot(votingRoundId);
+await accounting.syncRoot(votingRoundId, root);
+
+// Step 6: Submit proof to Sapphire (contract verifies locally)
+await accounting.verifyAndCredit(
+    proofData.proof,           // Merkle proof nodes
+    resp.attestationType,
+    resp.sourceId,
+    BigInt(resp.votingRound),
+    BigInt(resp.lowestUsedTimestamp),
+    resp.requestBody.transactionHash,
+    BigInt(body.blockNumber),
+    BigInt(body.timestamp),
+    body.sourceAddress,
+    body.receivingAddress,
+    BigInt(body.value),
+    Number(body.status)
+);
+```
+
+## What This Proves
+
+1. FDC Merkle proofs can be verified on any chain, not just Coston2
+2. Sapphire can independently verify deposit proofs (no trusted relayer for proof data)
+3. Root relay is the only trusted component (cannot forge proofs, only censor)
+4. Equivalent to FlexVaults' model: ShoyuBashi provides trusted block hashes → ProvethVerifier verifies proofs. Here: root relayer provides trusted Merkle roots → Sapphire verifies FDC proofs.
+
+## Limitations
+
+- Leaf encoding must exactly match FDC's internal format (requires research)
+- Root relayer can censor (delay roots) but cannot forge deposits
+- No ERC-20 support in PoC
+- Simplified proof struct (may need events/input for full leaf hash)
+
+## Complexity
+
+- ~120 lines Solidity (vs ~1000+ in FlexVaults, but much simpler logic)
+- ~250 lines TypeScript
+- Root relay is the only infrastructure (vs ROFL TEE + oracle + Hashi)
+
+---
+
+# Comparison
+
+| Aspect | Plan 1 (Trusted Relayer) | Plan 2 (Merkle on Sapphire) |
+|---|---|---|
+| **Implementation effort** | Low (~2-3 hours) | Medium (~4-6 hours + research) |
+| **Trust model** | Relayer trusted for accuracy | Relayer only trusted for root freshness |
+| **Can relayer forge deposits?** | Yes (it submits raw data) | No (must have valid Merkle proof) |
+| **Research needed** | None | FDC leaf encoding format |
+| **Solidity complexity** | ~80 lines, trivial | ~120 lines, needs exact FDC encoding |
+| **Closest to FlexVaults model** | Yes (trusted backend) | Yes (trustless proofs, trusted root source) |
+| **Production path** | Add ROFL TEE for relayer | Add decentralized root relay |
+
+## Recommendation
+
+Start with **Plan 1** for fast validation that FDC provides all necessary data. Then attempt **Plan 2** to prove the stronger trustless property. Plan 1 can be completed in a single session; Plan 2 may need iteration to match FDC's exact leaf encoding.
+
+## Shared Implementation Steps (Both Plans)
+
+1. Set up Hardhat in `contracts/` subdirectory
+2. Extract shared FDC logic from `src/poc.ts` into `src/fdc.ts`
+3. Add `@oasisprotocol/sapphire-paratime` dependency
+4. Write the Solidity contract (differs per plan)
+5. Write the TypeScript demo script
+6. Update `.env.example` with Sapphire RPC + contract addresses
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: /home/tom/.REDACTED.jsonl
+
+---
+
+[Request interrupted by user]
+
+---
+
+just write the plans down first
+
+---
+
+add https://github.com/Fission-AI/OpenSpec to this repo
+
+---
+
+install openspec for this repo
+
+---
+
+commit
