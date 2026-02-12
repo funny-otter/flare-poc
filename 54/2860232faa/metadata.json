@@ -3,7 +3,7 @@
   "checkpoint_id": "542860232faa",
   "strategy": "manual-commit",
   "branch": "feat/fdc-trustless-merkle-verification",
-  "checkpoints_count": 3,
+  "checkpoints_count": 11,
   "files_touched": [
     "fdc-trusted-relayer/.beads/.gitignore",
     "fdc-trusted-relayer/.beads/README.md",
@@ -11,6 +11,7 @@
     "fdc-trusted-relayer/.beads/interactions.jsonl",
     "fdc-trusted-relayer/.beads/issues.jsonl",
     "fdc-trusted-relayer/.beads/metadata.json",
+    "fdc-trusted-relayer/.beads/sync-state.json",
     "fdc-trusted-relayer/AGENTS.md",
     "fdc-trusted-relayer/contracts/artifacts/@oasisprotocol/sapphire-contracts/contracts/EIP155Signer.sol/EIP155Signer.dbg.json",
     "fdc-trusted-relayer/contracts/artifacts/@oasisprotocol/sapphire-contracts/contracts/EIP155Signer.sol/EIP155Signer.json",
@@ -42,7 +43,15 @@
     "fdc-trusted-relayer/contracts/typechain-types/index.ts",
     "fdc-trusted-relayer/contracts/typechain-types/src/FdcAccounting.ts",
     "fdc-trusted-relayer/contracts/typechain-types/src/index.ts",
+    "fdc-trustless-merkle/.beads/.gitignore",
+    "fdc-trustless-merkle/.beads/README.md",
+    "fdc-trustless-merkle/.beads/config.yaml",
+    "fdc-trustless-merkle/.beads/interactions.jsonl",
+    "fdc-trustless-merkle/.beads/issues.jsonl",
+    "fdc-trustless-merkle/.beads/metadata.json",
     "fdc-trustless-merkle/.env.example",
+    "fdc-trustless-merkle/.gitattributes",
+    "fdc-trustless-merkle/AGENTS.md",
     "fdc-trustless-merkle/artifacts/build-info/49a21fc85775ffb4e130ff15b1fb29fc.json",
     "fdc-trustless-merkle/artifacts/contracts/FdcAccountingTrustless.sol/FdcAccountingTrustless.dbg.json",
     "fdc-trustless-merkle/artifacts/contracts/FdcAccountingTrustless.sol/FdcAccountingTrustless.json",
@@ -63,6 +72,13 @@
     "fdc-trustless-merkle/typechain-types/factories/index.ts",
     "fdc-trustless-merkle/typechain-types/hardhat.d.ts",
     "fdc-trustless-merkle/typechain-types/index.ts",
+    "openspec/changes/fdc-trustless-merkle/.openspec.yaml",
+    "openspec/changes/fdc-trustless-merkle/design.md",
+    "openspec/changes/fdc-trustless-merkle/proposal.md",
+    "openspec/changes/fdc-trustless-merkle/specs/deposit-accounting/spec.md",
+    "openspec/changes/fdc-trustless-merkle/specs/merkle-verification/spec.md",
+    "openspec/changes/fdc-trustless-merkle/specs/relayer-backend/spec.md",
+    "openspec/changes/fdc-trustless-merkle/specs/root-sync/spec.md",
     "openspec/changes/fdc-trustless-merkle/tasks.md"
   ],
   "sessions": [
@@ -79,13 +95,20 @@
       "context": "/54/2860232faa/1/context.md",
       "content_hash": "/54/2860232faa/1/content_hash.txt",
       "prompt": "/54/2860232faa/1/prompt.txt"
+    },
+    {
+      "metadata": "/54/2860232faa/2/metadata.json",
+      "transcript": "/54/2860232faa/2/full.jsonl",
+      "context": "/54/2860232faa/2/context.md",
+      "content_hash": "/54/2860232faa/2/content_hash.txt",
+      "prompt": "/54/2860232faa/2/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 112,
-    "cache_creation_tokens": 150984,
-    "cache_read_tokens": 9451893,
-    "output_tokens": 26986,
-    "api_call_count": 98
+    "input_tokens": 182,
+    "cache_creation_tokens": 207801,
+    "cache_read_tokens": 11374778,
+    "output_tokens": 35226,
+    "api_call_count": 146
   }
 }
