@@ -1,0 +1,42 @@
+{
+  "cli_version": "0.4.2",
+  "checkpoint_id": "fee8ea67359a",
+  "session_id": "fd3e6abb-9fd8-4a2b-87e0-272a8e19a1dd",
+  "strategy": "manual-commit",
+  "created_at": "2026-02-12T15:12:24.890875631Z",
+  "branch": "feat/fdc-trusted-relayer-sapphire-accounting",
+  "checkpoints_count": 1,
+  "files_touched": [
+    ".env.example",
+    ".gitignore",
+    "fdc-trusted-relayer/README.md",
+    "fdc-trusted-relayer/contracts/hardhat.config.ts",
+    "fdc-trusted-relayer/contracts/package.json",
+    "fdc-trusted-relayer/contracts/src/FdcAccounting.sol",
+    "fdc-trusted-relayer/contracts/tsconfig.json",
+    "fdc-trusted-relayer/src/accounting-demo.ts",
+    "openspec/changes/fdc-encumbered-wallet/.openspec.yaml",
+    "openspec/changes/fdc-trusted-relayer/tasks.md",
+    "package.json"
+  ],
+  "agent": "Claude Code",
+  "transcript_identifier_at_start": "84052b2e-52a0-4d83-bd98-75bce8934f0d",
+  "checkpoint_transcript_start": 814,
+  "transcript_lines_at_start": 814,
+  "token_usage": {
+    "input_tokens": 43,
+    "cache_creation_tokens": 41075,
+    "cache_read_tokens": 4388402,
+    "output_tokens": 7479,
+    "api_call_count": 33
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-02-12T15:12:24.522666603Z",
+    "agent_lines": 3,
+    "human_added": 16,
+    "human_modified": 2,
+    "human_removed": 0,
+    "total_committed": 21,
+    "agent_percentage": 14.285714285714285
+  }
+}
