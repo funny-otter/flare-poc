@@ -57,6 +57,22 @@ The script takes ~2–4 minutes to complete due to the voting round finalization
 | FdcFeeConfig | `0x191a1282Ac700edE65c5B0AaF313BAcC3eA7fC7e` |
 | FdcVerification | `0x075bf301fF07C4920e5261f93a0609640F53487D` |
 
+## Subsystems
+
+### fdc-trustless-merkle/
+
+Trustless on-chain Merkle proof verification on Oasis Sapphire with private deposit balances. Instead of calling `FdcVerification` on Coston2, this approach syncs Merkle roots to Sapphire and verifies proofs entirely on-chain — the relayer transports data but cannot forge deposits.
+
+Three chains: Sepolia (deposits) → Coston2 (FDC attestation) → Sapphire (proof verification + confidential balances).
+
+```bash
+cd fdc-trustless-merkle
+npm install && npm run compile
+npm run relay   # full end-to-end flow (~3 min)
+```
+
+See [`fdc-trustless-merkle/README.md`](fdc-trustless-merkle/README.md) for details.
+
 ## Resources
 
 - [FDC overview](https://dev.flare.network/fdc/overview)
