@@ -2,9 +2,126 @@
   "_format": "hh-sol-cache-2",
   "files": {
     "/home/tom/dev/oasis/flare-poc/fdc-trustless-merkle/contracts/FdcAccountingTrustless.sol": {
-      "lastModificationDate": 1770914348877,
-      "contentHash": "d9e861b8be01a2796579252c91bbd2cb",
+      "lastModificationDate": 1770999985372,
+      "contentHash": "c07b79a2fdbc5cddd440df091ac7afd9",
       "sourceName": "contracts/FdcAccountingTrustless.sol",
+      "solcConfig": {
+        "version": "0.8.24",
+        "settings": {
+          "evmVersion": "paris",
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "@oasisprotocol/sapphire-contracts/contracts/EthereumUtils.sol",
+        "@oasisprotocol/sapphire-contracts/contracts/EIP155Signer.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.24"
+      ],
+      "artifacts": [
+        "FdcAccountingTrustless"
+      ]
+    },
+    "/home/tom/dev/oasis/flare-poc/fdc-trustless-merkle/node_modules/@oasisprotocol/sapphire-contracts/contracts/EthereumUtils.sol": {
+      "lastModificationDate": 1770999935445,
+      "contentHash": "fc23937e677647b5ae1a5439466b7f8e",
+      "sourceName": "@oasisprotocol/sapphire-contracts/contracts/EthereumUtils.sol",
+      "solcConfig": {
+        "version": "0.8.24",
+        "settings": {
+          "evmVersion": "paris",
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "./Sapphire.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.0"
+      ],
+      "artifacts": [
+        "EthereumUtils"
+      ]
+    },
+    "/home/tom/dev/oasis/flare-poc/fdc-trustless-merkle/node_modules/@oasisprotocol/sapphire-contracts/contracts/EIP155Signer.sol": {
+      "lastModificationDate": 1770999935436,
+      "contentHash": "1e04894d3a664347c74278086ed589a0",
+      "sourceName": "@oasisprotocol/sapphire-contracts/contracts/EIP155Signer.sol",
+      "solcConfig": {
+        "version": "0.8.24",
+        "settings": {
+          "evmVersion": "paris",
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "./Sapphire.sol",
+        "./EthereumUtils.sol",
+        "./RLPWriter.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.0"
+      ],
+      "artifacts": [
+        "EIP155Signer"
+      ]
+    },
+    "/home/tom/dev/oasis/flare-poc/fdc-trustless-merkle/node_modules/@oasisprotocol/sapphire-contracts/contracts/Sapphire.sol": {
+      "lastModificationDate": 1770999935453,
+      "contentHash": "d7a6ae1e9380dc91b542c2ea616b99bf",
+      "sourceName": "@oasisprotocol/sapphire-contracts/contracts/Sapphire.sol",
       "solcConfig": {
         "version": "0.8.24",
         "settings": {
@@ -31,10 +148,46 @@
       },
       "imports": [],
       "versionPragmas": [
-        "^0.8.24"
+        "^0.8.0"
       ],
       "artifacts": [
-        "FdcAccountingTrustless"
+        "Sapphire"
+      ]
+    },
+    "/home/tom/dev/oasis/flare-poc/fdc-trustless-merkle/node_modules/@oasisprotocol/sapphire-contracts/contracts/RLPWriter.sol": {
+      "lastModificationDate": 1770999935451,
+      "contentHash": "88a0e7c6f133d439d1def3731db2c740",
+      "sourceName": "@oasisprotocol/sapphire-contracts/contracts/RLPWriter.sol",
+      "solcConfig": {
+        "version": "0.8.24",
+        "settings": {
+          "evmVersion": "paris",
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.0"
+      ],
+      "artifacts": [
+        "RLPWriter"
       ]
     }
   }

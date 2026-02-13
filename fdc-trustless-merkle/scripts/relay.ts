@@ -1,18 +1,21 @@
 /**
  * End-to-end FDC trustless relay:
- *   0. Deploy contract to Sapphire (if needed)
- *   1. Send deposit on Sepolia (self-transfer)
+ *   0. Deploy contract to Sapphire (if needed) — generates encumbered wallet
+ *   1. Send deposit to encumbered wallet on Sepolia
  *   2. Request attestation from FDC (Coston2)
  *   3. Wait for proof (DA layer)
  *   4. Sync Merkle root from Coston2 Relay to Sapphire
  *   5. Submit proof to verifyAndCredit on Sapphire
- *   6. Query and display updated balance
+ *   6. Request withdrawal on Sapphire → signed Sepolia tx
+ *   7. Broadcast withdrawal tx on Sepolia
+ *   8. Display round-trip results
  *
  * Usage: npx tsx scripts/relay.ts
  */
 
 import "dotenv/config";
 import { ethers } from "ethers";
+import { wrapEthersSigner } from "@oasisprotocol/sapphire-ethers-v6";
 import { readFileSync, writeFileSync, existsSync } from "fs";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -37,6 +40,8 @@ const FLARE_CONTRACT_REGISTRY = "0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019";
 const FDC_PROTOCOL_ID = 200;
 
 const DEPOSIT_AMOUNT = ethers.parseEther("0.0001");
+const SEPOLIA_CHAIN_ID = 11155111n;
+const WITHDRAWAL_GAS_LIMIT = 21000n;
 
 // Voting round timing
 const FIRST_VOTING_ROUND_START_TS = 1658430000n;
@@ -156,8 +161,7 @@ async function getSepoliaProvider(): Promise<ethers.JsonRpcProvider> {
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function ensureDeployed(
-  sapphireSigner: ethers.Wallet,
-  depositAddress: string
+  sapphireSigner: ethers.Signer
 ): Promise<string> {
   if (process.env.CONTRACT_ADDRESS) {
     console.log(`  Already deployed: ${process.env.CONTRACT_ADDRESS}`);
@@ -172,7 +176,10 @@ async function ensureDeployed(
   );
 
   console.log("  Deploying FdcAccountingTrustless...");
-  const contract = await factory.deploy(sapphireSigner.address, depositAddress);
+  const contract = await factory.deploy(
+    await sapphireSigner.getAddress(),
+    SEPOLIA_CHAIN_ID
+  );
   await contract.waitForDeployment();
 
   const address = await contract.getAddress();
@@ -192,10 +199,13 @@ async function ensureDeployed(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Step 1: Send deposit on Sepolia
+// Step 1: Send deposit on Sepolia (to encumbered wallet)
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function sendDeposit(privateKey: string): Promise<string> {
+async function sendDeposit(
+  privateKey: string,
+  depositAddress: string
+): Promise<string> {
   const provider = await getSepoliaProvider();
   const signer = new ethers.Wallet(privateKey, provider);
 
@@ -209,10 +219,10 @@ async function sendDeposit(privateKey: string): Promise<string> {
   }
 
   console.log(
-    `  Sending ${ethers.formatEther(DEPOSIT_AMOUNT)} ETH to self (${signer.address})...`
+    `  Sending ${ethers.formatEther(DEPOSIT_AMOUNT)} ETH to encumbered wallet (${depositAddress})...`
   );
   const tx = await signer.sendTransaction({
-    to: signer.address,
+    to: depositAddress,
     value: DEPOSIT_AMOUNT,
   });
   console.log(`  TX hash: ${tx.hash}`);
@@ -445,6 +455,71 @@ async function submitProof(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Step 6: Request withdrawal on Sapphire
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function requestWithdrawal(
+  contract: ethers.Contract,
+  to: string,
+  amount: bigint,
+  sepoliaProvider: ethers.JsonRpcProvider
+): Promise<string> {
+  const feeData = await sepoliaProvider.getFeeData();
+  const gasPrice = feeData.gasPrice ?? ethers.parseUnits("10", "gwei");
+  const gasCost = gasPrice * WITHDRAWAL_GAS_LIMIT;
+
+  if (amount <= gasCost) {
+    throw new Error(
+      `Withdrawal amount (${ethers.formatEther(amount)}) must exceed gas cost (${ethers.formatEther(gasCost)})`
+    );
+  }
+
+  const withdrawalAmount = amount - gasCost;
+  console.log(`  Gas price:     ${ethers.formatUnits(gasPrice, "gwei")} gwei`);
+  console.log(`  Gas cost:      ${ethers.formatEther(gasCost)} ETH`);
+  console.log(`  Net withdrawal: ${ethers.formatEther(withdrawalAmount)} ETH`);
+
+  const tx = await contract.withdraw(to, withdrawalAmount, gasPrice, WITHDRAWAL_GAS_LIMIT);
+  console.log(`  Sapphire tx: ${tx.hash}`);
+  const receipt = await tx.wait(1);
+  if (!receipt || receipt.status !== 1) throw new Error("withdraw reverted");
+
+  // Parse WithdrawalSigned event from receipt
+  const iface = contract.interface;
+  for (const log of receipt.logs) {
+    try {
+      const parsed = iface.parseLog({ topics: log.topics as string[], data: log.data });
+      if (parsed && parsed.name === "WithdrawalSigned") {
+        const signedTx = parsed.args.signedTx;
+        console.log(`  Signed tx:     ${signedTx.slice(0, 42)}...`);
+        return signedTx;
+      }
+    } catch {
+      // skip non-matching logs
+    }
+  }
+
+  throw new Error("WithdrawalSigned event not found in receipt");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Step 7: Broadcast withdrawal on Sepolia
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function broadcastWithdrawal(
+  sepoliaProvider: ethers.JsonRpcProvider,
+  signedTx: string
+): Promise<string> {
+  const txResponse = await sepoliaProvider.broadcastTransaction(signedTx);
+  console.log(`  Broadcast TX:  ${txResponse.hash}`);
+  const receipt = await txResponse.wait(1);
+  if (!receipt || receipt.status !== 1)
+    throw new Error("Withdrawal tx reverted on Sepolia");
+  console.log(`  Confirmed in block ${receipt.blockNumber}`);
+  return txResponse.hash;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Main
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -459,22 +534,19 @@ async function main() {
   const coston2Signer = new ethers.Wallet(coston2Pk, coston2Provider);
 
   const sapphireProvider = new ethers.JsonRpcProvider(SAPPHIRE_TESTNET_RPC);
-  const sapphireSigner = new ethers.Wallet(sapphirePk, sapphireProvider);
-
-  // The deposit address is the wallet's own address (self-transfer)
-  const depositAddress = coston2Signer.address;
+  const baseSapphireSigner = new ethers.Wallet(sapphirePk, sapphireProvider);
+  const sapphireSigner = wrapEthersSigner(baseSapphireSigner);
 
   console.log(`\n${"═".repeat(70)}`);
   console.log("  FDC Trustless Merkle Relay — Full Integration Test");
   console.log(`${"═".repeat(70)}`);
   console.log(`Wallet:           ${coston2Signer.address}`);
-  console.log(`Deposit address:  ${depositAddress}`);
 
   // Step 0: Deploy
   console.log(`\n${"─".repeat(70)}`);
   console.log("Step 0: Ensuring contract is deployed on Sapphire");
   console.log(`${"─".repeat(70)}`);
-  const contractAddress = await ensureDeployed(sapphireSigner, depositAddress);
+  const contractAddress = await ensureDeployed(sapphireSigner);
 
   const artifact = loadArtifact();
   const contract = new ethers.Contract(
@@ -483,15 +555,19 @@ async function main() {
     sapphireSigner
   );
 
-  // Check balance before
-  const balanceBefore = await contract.getBalance();
-  console.log(`\nBalance before:   ${ethers.formatEther(balanceBefore)} ETH`);
+  // Read the encumbered wallet address (deposit target on Sepolia)
+  const depositAddress: string = await contract.encumberedWalletAddr();
+  console.log(`Deposit address:  ${depositAddress} (encumbered wallet)`);
 
-  // Step 1: Send deposit on Sepolia
+  // Check balance before
+  const balanceBefore: bigint = await contract.getBalance();
+  console.log(`Balance before:   ${ethers.formatEther(balanceBefore)} ETH`);
+
+  // Step 1: Send deposit to encumbered wallet on Sepolia
   console.log(`\n${"─".repeat(70)}`);
-  console.log("Step 1: Sending deposit on Sepolia");
+  console.log("Step 1: Sending deposit to encumbered wallet on Sepolia");
   console.log(`${"─".repeat(70)}`);
-  const sepoliaTxHash = await sendDeposit(coston2Pk);
+  const sepoliaTxHash = await sendDeposit(coston2Pk, depositAddress);
   console.log(`  Deposit TX: ${sepoliaTxHash}`);
 
   // Step 2: Request attestation
@@ -530,17 +606,43 @@ async function main() {
   console.log(`${"─".repeat(70)}`);
   await submitProof(contract, proofData);
 
-  // Step 6: Check balance after
-  const balanceAfter = await contract.getBalance();
-  console.log(`\n${"═".repeat(70)}`);
-  console.log("  RESULT");
-  console.log(`${"═".repeat(70)}`);
-  console.log(`Balance before:   ${ethers.formatEther(balanceBefore)} ETH`);
-  console.log(`Balance after:    ${ethers.formatEther(balanceAfter)} ETH`);
-  console.log(
-    `Credited:         ${ethers.formatEther(balanceAfter - balanceBefore)} ETH`
+  // Check balance after credit
+  const balanceAfterCredit: bigint = await contract.getBalance();
+  console.log(`\n  Balance after credit: ${ethers.formatEther(balanceAfterCredit)} ETH`);
+
+  // Step 6: Request withdrawal
+  console.log(`\n${"─".repeat(70)}`);
+  console.log("Step 6: Requesting withdrawal on Sapphire");
+  console.log(`${"─".repeat(70)}`);
+  const sepoliaProvider = await getSepoliaProvider();
+  const sepoliaBalanceBefore = await sepoliaProvider.getBalance(coston2Signer.address);
+  const signedTx = await requestWithdrawal(
+    contract,
+    coston2Signer.address,
+    balanceAfterCredit,
+    sepoliaProvider
   );
-  console.log(`\n  Deposit verified trustlessly via on-chain Merkle proof!`);
+
+  // Step 7: Broadcast on Sepolia
+  console.log(`\n${"─".repeat(70)}`);
+  console.log("Step 7: Broadcasting withdrawal on Sepolia");
+  console.log(`${"─".repeat(70)}`);
+  await broadcastWithdrawal(sepoliaProvider, signedTx);
+
+  // Step 8: Final results
+  const balanceAfterWithdrawal: bigint = await contract.getBalance();
+  const sepoliaBalanceAfter = await sepoliaProvider.getBalance(coston2Signer.address);
+
+  console.log(`\n${"═".repeat(70)}`);
+  console.log("  RESULT — Full Round Trip");
+  console.log(`${"═".repeat(70)}`);
+  console.log(`Sapphire balance before:  ${ethers.formatEther(balanceBefore)} ETH`);
+  console.log(`Sapphire balance credited: ${ethers.formatEther(balanceAfterCredit)} ETH`);
+  console.log(`Sapphire balance after:   ${ethers.formatEther(balanceAfterWithdrawal)} ETH`);
+  console.log(`Sepolia balance before:   ${ethers.formatEther(sepoliaBalanceBefore)} ETH`);
+  console.log(`Sepolia balance after:    ${ethers.formatEther(sepoliaBalanceAfter)} ETH`);
+  console.log(`Sepolia recovered:        ${ethers.formatEther(sepoliaBalanceAfter - sepoliaBalanceBefore)} ETH`);
+  console.log(`\n  Deposit → Credit → Withdrawal round-trip complete!`);
   console.log(`${"═".repeat(70)}\n`);
 }
 

@@ -1,0 +1,36 @@
+{
+  "_format": "hh-sol-artifact-1",
+  "contractName": "EthereumUtils",
+  "sourceName": "@oasisprotocol/sapphire-contracts/contracts/EthereumUtils.sol",
+  "abi": [
+    {
+      "inputs": [],
+      "name": "DER_Split_Error",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "expmod_Error",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "k256Decompress_Invalid_Length_Error",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "k256DeriveY_Invalid_Prefix_Error",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "recoverV_Error",
+      "type": "error"
+    }
+  ],
+  "bytecode": "0x60566050600b82828239805160001a6073146043577f4e487b7100000000000000000000000000000000000000000000000000000000600052600060045260246000fd5b30600052607381538281f3fe73000000000000000000000000000000000000000030146080604052600080fdfea26469706673582212203ece20627673fff11bd5c50cbef7a6d65dfa1b64ec6d987c334d59c3f55f264864736f6c63430008180033",
+  "deployedBytecode": "0x73000000000000000000000000000000000000000030146080604052600080fdfea26469706673582212203ece20627673fff11bd5c50cbef7a6d65dfa1b64ec6d987c334d59c3f55f264864736f6c63430008180033",
+  "linkReferences": {},
+  "deployedLinkReferences": {}
+}

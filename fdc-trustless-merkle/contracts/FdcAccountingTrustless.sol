@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {EthereumUtils} from "@oasisprotocol/sapphire-contracts/contracts/EthereumUtils.sol";
+import {EIP155Signer} from "@oasisprotocol/sapphire-contracts/contracts/EIP155Signer.sol";
+
 /**
  * @title FdcAccountingTrustless
  * @notice Verifies FDC Merkle proofs on Sapphire and credits private deposit balances.
+ *         Generates an encumbered wallet keypair for deposits and signs withdrawal txs.
  *
  * The relayer syncs Merkle roots from Coston2's Relay contract. Proofs are verified
  * entirely on-chain — the relayer cannot forge deposits, only relay roots.
@@ -55,7 +59,12 @@ contract FdcAccountingTrustless {
     // ═══════════════════════════════════════════════════════════════════════
 
     address public immutable rootRelayer;
-    address public immutable depositAddress;
+    uint256 public immutable withdrawalChainId;
+
+    /// @notice Encumbered wallet — generated inside the TEE at deploy time
+    address public encumberedWalletAddr;
+    bytes32 private encumberedWalletKey;
+    uint256 public encumberedWalletNonce;
 
     /// @notice Merkle roots per voting round (write-once)
     mapping(uint64 => bytes32) public roots;
@@ -72,16 +81,18 @@ contract FdcAccountingTrustless {
 
     event RootSynced(uint64 indexed votingRound, bytes32 merkleRoot);
     event DepositCredited(address indexed sourceAddress, uint256 value, bytes32 txHash);
+    event WithdrawalSigned(address indexed user, address indexed to, uint256 amount, bytes signedTx);
 
     // ═══════════════════════════════════════════════════════════════════════
     // Constructor
     // ═══════════════════════════════════════════════════════════════════════
 
-    constructor(address _rootRelayer, address _depositAddress) {
+    constructor(address _rootRelayer, uint256 _withdrawalChainId) {
         require(_rootRelayer != address(0), "Zero relayer");
-        require(_depositAddress != address(0), "Zero deposit addr");
+        require(_withdrawalChainId != 0, "Zero chain ID");
         rootRelayer = _rootRelayer;
-        depositAddress = _depositAddress;
+        withdrawalChainId = _withdrawalChainId;
+        (encumberedWalletAddr, encumberedWalletKey) = EthereumUtils.generateKeypair();
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -111,7 +122,7 @@ contract FdcAccountingTrustless {
 
         // Deposit validation
         require(response.responseBody.status == 1, "Tx not successful");
-        require(response.responseBody.receivingAddress == depositAddress, "Wrong receiver");
+        require(response.responseBody.receivingAddress == encumberedWalletAddr, "Wrong receiver");
         require(response.responseBody.value > 0, "Zero value");
 
         // Merkle verification
@@ -138,6 +149,53 @@ contract FdcAccountingTrustless {
 
     function getBalance() external view returns (uint256) {
         return balances[msg.sender];
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Deposit address query
+    // ═══════════════════════════════════════════════════════════════════════
+
+    function getDepositAddress() external view returns (address) {
+        return encumberedWalletAddr;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Withdrawal — sign an EIP-155 tx from the encumbered wallet
+    // ═══════════════════════════════════════════════════════════════════════
+
+    function withdraw(
+        address to,
+        uint256 amount,
+        uint256 gasPrice,
+        uint64 gasLimit
+    ) external returns (bytes memory) {
+        require(amount > 0, "Zero amount");
+        require(balances[msg.sender] >= amount, "Insufficient balance");
+        require(to != address(0), "Zero recipient");
+
+        balances[msg.sender] -= amount;
+
+        EIP155Signer.EthTx memory ethTx = EIP155Signer.EthTx({
+            nonce: uint64(encumberedWalletNonce),
+            gasPrice: gasPrice,
+            gasLimit: gasLimit,
+            to: to,
+            value: amount,
+            data: "",
+            chainId: withdrawalChainId
+        });
+
+        bytes memory signedTx = EIP155Signer.sign(
+            encumberedWalletAddr,
+            encumberedWalletKey,
+            ethTx
+        );
+
+        encumberedWalletNonce++;
+
+        emit WithdrawalSigned(msg.sender, to, amount, signedTx);
+
+        return signedTx;
     }
 
     // ═══════════════════════════════════════════════════════════════════════

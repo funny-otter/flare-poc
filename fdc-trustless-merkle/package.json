@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@flarenetwork/flare-tx-sdk": "^1.4.0",
+    "@oasisprotocol/sapphire-contracts": "^0.2.15",
+    "@oasisprotocol/sapphire-ethers-v6": "^6.0.1",
     "dotenv": "^16.4.7",
     "ethers": "^6.13.4"
   },

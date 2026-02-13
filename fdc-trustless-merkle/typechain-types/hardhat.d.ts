@@ -14,10 +14,19 @@ import * as Contracts from ".";
 declare module "hardhat/types/runtime" {
   interface HardhatEthersHelpers extends HardhatEthersHelpersBase {
     getContractFactory(
+      name: "EthereumUtils",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.EthereumUtils__factory>;
+    getContractFactory(
       name: "FdcAccountingTrustless",
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.FdcAccountingTrustless__factory>;
 
+    getContractAt(
+      name: "EthereumUtils",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.EthereumUtils>;
     getContractAt(
       name: "FdcAccountingTrustless",
       address: string | ethers.Addressable,
@@ -25,10 +34,19 @@ declare module "hardhat/types/runtime" {
     ): Promise<Contracts.FdcAccountingTrustless>;
 
     deployContract(
+      name: "EthereumUtils",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.EthereumUtils>;
+    deployContract(
       name: "FdcAccountingTrustless",
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.FdcAccountingTrustless>;
 
+    deployContract(
+      name: "EthereumUtils",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.EthereumUtils>;
     deployContract(
       name: "FdcAccountingTrustless",
       args: any[],
