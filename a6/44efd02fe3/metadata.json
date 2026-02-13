@@ -1,0 +1,38 @@
+{
+  "cli_version": "0.4.2",
+  "checkpoint_id": "a644efd02fe3",
+  "strategy": "manual-commit",
+  "branch": "feat/fdc-trustless-merkle-verification",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "README.md",
+    "fdc-trustless-merkle/.env.example",
+    "fdc-trustless-merkle/README.md",
+    "fdc-trustless-merkle/contracts/FdcAccountingTrustless.sol",
+    "fdc-trustless-merkle/hardhat.config.cts",
+    "fdc-trustless-merkle/hardhat.config.ts",
+    "fdc-trustless-merkle/package.json",
+    "fdc-trustless-merkle/scripts/deploy.ts",
+    "fdc-trustless-merkle/scripts/relay.ts",
+    "fdc-trustless-merkle/scripts/send-deposit.ts",
+    "fdc-trustless-merkle/scripts/test-edge-cases.ts",
+    "fdc-trustless-merkle/tsconfig.json",
+    "openspec/changes/fdc-trustless-merkle/tasks.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/a6/44efd02fe3/0/metadata.json",
+      "transcript": "/a6/44efd02fe3/0/full.jsonl",
+      "context": "/a6/44efd02fe3/0/context.md",
+      "content_hash": "/a6/44efd02fe3/0/content_hash.txt",
+      "prompt": "/a6/44efd02fe3/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 11,
+    "cache_creation_tokens": 26216,
+    "cache_read_tokens": 313982,
+    "output_tokens": 5756,
+    "api_call_count": 5
+  }
+}

@@ -1,0 +1,701 @@
+go in trustless merkle
+
+---
+
+start imple task from bd, keep openspec in sync
+
+---
+
+<task-notification>
+<task-id>aeea5cf</task-id>
+<status>completed</status>
+<summary>Agent "Research FdcVerification leaf encoding" completed</summary>
+<result>I now have all the information needed for a comprehensive answer. Let me also quickly verify the MIC_SALT and the MIC hash relationship.
+
+The `attestationResponseHash` function in `AttestationDefinitionStore.ts` shows:
+- Without salt: `keccak256(abi.encode(responseAbi, response))` -- this is the **leaf hash** for the Merkle tree
+- With salt "Flare": `keccak256(abi.encode(responseAbi, response, "string", "Flare"))` -- this is the **MIC (Message Integrity Code)**
+
+And in `FdcVerification.sol`:
+```solidity
+keccak256(abi.encode(_proof.data))
+```
+
+These match because `_proof.data` is `IEVMTransaction.Response` which matches `responseAbi`.
+
+Here is the complete research findings:
+
+---
+
+## Research Findings: FdcVerification Merkle Leaf Construction
+
+### 1. Leaf Hash Formula
+
+**The leaf hash is exactly:**
+
+```solidity
+keccak256(abi.encode(_proof.data))
+```
+
+where `_proof.data` is the **entire `IEVMTransaction.Response` struct** (everything except `merkleProof`).
+
+This is confirmed directly in the source code at `/contracts/fdc/implementation/FdcVerification.sol` in the [flare-smart-contracts-v2](https://github.com/flare-foundation/flare-smart-contracts-v2) repository:
+
+```solidity
+function verifyEVMTransaction(IEVMTransaction.Proof calldata _proof)
+    external view returns (bool _proved)
+{
+    bytes32 merkleRoot = relay.merkleRoots(fdcProtocolId, _proof.data.votingRound);
+    return
+        _proof.data.attestationType == bytes32("EVMTransaction") &&
+        _proof.merkleProof.verifyCalldata(merkleRoot, keccak256(abi.encode(_proof.data)));
+}
+```
+
+Key points:
+- It uses **`abi.encode`** (NOT `abi.encodePacked`). This is standard ABI encoding with padding.
+- The input to `keccak256` is the ABI encoding of the **entire `Response` struct** (the `_proof.data` field).
+- It also checks that `attestationType == bytes32("EVMTransaction")` as a sanity guard.
+
+### 2. Exact Struct Layout for EVMTransaction
+
+From `/coston2/IEVMTransaction.sol` in the [flare-solidity-periphery-package-mirror](https://github.com/flare-foundation/flare-solidity-periphery-package-mirror):
+
+```solidity
+interface IEVMTransaction {
+    struct Proof {
+        bytes32[] merkleProof;
+        Response data;        // <-- this is what gets hashed for the leaf
+    }
+
+    struct Response {
+        bytes32 attestationType;      // "EVMTransaction" as bytes32
+        bytes32 sourceId;             // "testETH" as bytes32 (for Coston2/Sepolia)
+        uint64  votingRound;
+        uint64  lowestUsedTimestamp;
+        RequestBody requestBody;
+        ResponseBody responseBody;
+    }
+
+    struct RequestBody {
+        bytes32  transactionHash;
+        uint16   requiredConfirmations;
+        bool     provideInput;
+        bool     listEvents;
+        uint32[] logIndices;
+    }
+
+    struct ResponseBody {
+        uint64   blockNumber;
+        uint64   timestamp;
+        address  sourceAddress;
+        bool     isDeployment;
+        address  receivingAddress;
+        uint256  value;
+        bytes    input;
+        uint8    status;
+        Event[]  events;
+    }
+
+    struct Event {
+        uint32    logIndex;
+        address   emitterAddress;
+        bytes32[] topics;
+        bytes     data;
+        bool      removed;
+    }
+}
+```
+
+So the leaf is: `keccak256(abi.encode(Response))` where `Response` contains all of: `attestationType`, `sourceId`, `votingRound`, `lowestUsedTimestamp`, `requestBody` (with all its fields), and `responseBody` (with all its fields including nested `events`).
+
+### 3. Merkle Proof Algorithm: OpenZeppelin Sorted Pairs (Commutative)
+
+**FdcVerification uses OpenZeppelin's MerkleProof library with sorted/commutative hashing.**
+
+From `FdcVerification.sol`:
+```solidity
+import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+
+contract FdcVerification is IFdcVerification, AddressUpdatable {
+    using MerkleProof for bytes32[];
+    // ...
+    _proof.merkleProof.verifyCalldata(merkleRoot, keccak256(abi.encode(_proof.data)));
+}
+```
+
+OpenZeppelin's `verifyCalldata` calls `processProofCalldata` which uses `Hashes.commutativeKeccak256()`:
+```solidity
+// From OpenZeppelin Hashes.sol
+function commutativeKeccak256(bytes32 a, bytes32 b) internal pure returns (bytes32) {
+    return a < b ? efficientKeccak256(a, b) : efficientKeccak256(b, a);
+}
+```
+
+This means:
+- **Sorted pairs**: At each level, the two sibling hashes are sorted (smaller first) before being concatenated and hashed.
+- **NOT positional left/right**: You do NOT need to track whether the proof element is a left or right sibling -- the sorting handles it.
+- The proof is just a flat array of `bytes32[]` sibling hashes, one per tree level.
+
+This is also confirmed by the off-chain implementation in `/src/external-libs/ts/MerkleTree.ts` from the [evm-verifier](https://github.com/flare-foundation/evm-verifier) repo:
+
+```typescript
+export function sortedHashPair(x: string, y: string) {
+    if (x <= y) {
+        return ethers.keccak256(coder.encode(["bytes32", "bytes32"], [x, y]));
+    }
+    return ethers.keccak256(coder.encode(["bytes32", "bytes32"], [y, x]));
+}
+```
+
+**Important detail about the pair hashing**: The pair hash uses `abi.encode(["bytes32", "bytes32"], [a, b])` (which produces 64 bytes of concatenated 32-byte values), NOT `abi.encodePacked`. OpenZeppelin's Solidity implementation does the equivalent using inline assembly for efficiency, but the result is the same as `keccak256(abi.encode(sorted_a, sorted_b))`.
+
+Additionally, the off-chain MerkleTree implementation:
+- **Sorts leaves** before building the tree (`sorted.sort()`)
+- **Deduplicates** leaves (removes identical hashes)
+- Uses a binary heap array representation (root at index 0, leaves at `[n-1 ... 2n-2]`)
+
+### 4. Relay Contract: Where Merkle Roots are Stored
+
+The `Relay` contract stores Merkle roots in:
+```solidity
+mapping(uint256 protocolId => mapping(uint256 votingRoundId => bytes32)) private merkleRootsPrivate;
+```
+
+Accessed via:
+```solidity
+function merkleRoots(uint256 _protocolId, uint256 _votingRoundId) external view returns (bytes32);
+```
+
+The FDC protocol has a specific `fdcProtocolId` (stored as `uint8` in FdcVerification). When verification happens:
+```solidity
+bytes32 merkleRoot = relay.merkleRoots(fdcProtocolId, _proof.data.votingRound);
+```
+
+The Relay also has a lower-level `verify` function that can verify arbitrary leaves:
+```solidity
+function verify(uint256 _protocolId, uint256 _votingRoundId, bytes32 _leaf, bytes32[] calldata _proof)
+    external payable returns (bool);
+```
+
+This also uses `_proof.verifyCalldata(merkleRootsPrivate[_protocolId][_votingRoundId], _leaf)` -- the same OpenZeppelin sorted-pair verification.
+
+### 5. Off-Chain Leaf Hash (for trustless verification)
+
+The off-chain code in the `AttestationDefinitionStore` computes the same hash:
+
+```typescript
+// From AttestationDefinitionStore.ts
+attestationResponseHash<T extends ARESBase>(response: T, salt?: string): string {
+    const attestationType = decodeAttestationName(response.attestationType);
+    const definition = this.getDefinitionForDecodedAttestationType(attestationType);
+    let abiEncoded;
+    if (salt) {
+        // This is the MIC (Message Integrity Code) = keccak256(abi.encode(response, "Flare"))
+        abiEncoded = this.coder.encode([definition.responseAbi, "string"], [response, salt]);
+    } else {
+        // This is the LEAF HASH = keccak256(abi.encode(response))
+        abiEncoded = this.coder.encode([definition.responseAbi], [response]);
+    }
+    return ethers.keccak256(abiEncoded);
+}
+```
+
+So to compute the leaf hash off-chain in TypeScript with ethers.js v6, you would do:
+
+```typescript
+const coder = ethers.AbiCoder.defaultAbiCoder();
+const abiEncoded = coder.encode([responseAbiTuple], [responseData]);
+const leafHash = ethers.keccak256(abiEncoded);
+```
+
+Where `responseAbiTuple` is the full ABI tuple descriptor matching `IEVMTransaction.Response`.
+
+### Summary Table
+
+| Aspect | Answer |
+|--------|--------|
+| Leaf hash | `keccak256(abi.encode(IEVMTransaction.Response))` |
+| Encoding | `abi.encode` (NOT `abi.encodePacked`) |
+| What gets hashed | The entire `Response` struct (= `_proof.data`), excluding `merkleProof` |
+| Merkle proof type | OpenZeppelin `MerkleProof.verifyCalldata` -- **sorted pairs** (commutative) |
+| Pair hashing | `keccak256(concat(min(a,b), max(a,b)))` where a,b are sibling hashes |
+| Leaf ordering | Leaves are sorted and deduplicated before tree construction |
+| Merkle root storage | `Relay.merkleRoots(fdcProtocolId, votingRoundId)` |
+| MIC (not the leaf) | `keccak256(abi.encode(response, "Flare"))` -- used for request integrity only |</result>
+<usage>total_tokens: 85354
+tool_uses: 42
+duration_ms: 235636</usage>
+</task-notification>
+Full transcript available at: /tmp/claude-1000/-home-tom-dev-oasis-flare-poc/tasks/aeea5cf.output
+
+---
+
+<task-notification>
+<task-id>a66aa6b</task-id>
+<status>completed</status>
+<summary>Agent "Research Relay contract API" completed</summary>
+<result>Now I have all the information. Let me compile the complete findings.
+
+---
+
+Here is a comprehensive summary of my research findings on the Flare Relay contract on Coston2 testnet:
+
+## 1. Relay Contract Address on Coston2
+
+**Address: `0x97702e350CaEda540935d92aAf213307e9069784`**
+
+This was confirmed from two independent sources:
+- The FDC client configuration file at `configs/systemConfigs/200/coston2.toml` in the [flare-foundation/fdc-client](https://github.com/flare-foundation/fdc-client) repository
+- The Coston2 block explorer API at `coston2-explorer.flare.network`, which confirms the contract is a verified smart contract named **"Relay"**, deployed by `0x99E0770aa23CAA9071B6112208297E7a8d8F8a4A`
+
+The Relay address can also be resolved dynamically at runtime by querying the **FlareContractRegistry** (same address on all Flare networks: `0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019`) with `getContractAddressByName("Relay")`.
+
+## 2. Function Signatures for Reading Confirmed FDC Merkle Roots
+
+The IRelay interface is defined at [`contracts/userInterfaces/IRelay.sol`](https://github.com/flare-foundation/flare-smart-contracts-v2/blob/main/contracts/userInterfaces/IRelay.sol) in the flare-smart-contracts-v2 repository. The key functions for reading confirmed FDC Merkle roots are:
+
+### Primary: `merkleRoots`
+```solidity
+function merkleRoots(uint256 _protocolId, uint256 _votingRoundId) 
+    external view returns (bytes32 _merkleRoot);
+```
+Returns the Merkle root for a given protocol ID and voting round ID. **Note:** This function reverts when `signingPolicySetter` is NOT set (i.e., on pure relay deployments). For the native Coston2 Relay, this should work.
+
+### Finalization Check: `isFinalized`
+```solidity
+function isFinalized(uint256 _protocolId, uint256 _votingRoundId) 
+    external view returns (bool);
+```
+Returns `true` if a finalization exists for the given protocol ID and voting round ID. This is the recommended check before attempting to read a Merkle root. The Flare developer docs specifically recommend using this for testing environments.
+
+### On-chain Merkle Proof Verification: `verify`
+```solidity
+function verify(
+    uint256 _protocolId, 
+    uint256 _votingRoundId, 
+    bytes32 _leaf, 
+    bytes32[] calldata _proof
+) external payable returns (bool);
+```
+Verifies a leaf against the stored Merkle root using a Merkle proof. This is payable -- a protocol-specific fee may be required. **Overpayment is not refunded.**
+
+### Helper: `getVotingRoundId`
+```solidity
+function getVotingRoundId(uint256 _timestamp) 
+    external view returns (uint256 _votingRoundId);
+```
+Converts a timestamp to its voting round ID. The formula is: `votingRoundId = (timestamp - 1658430000) / 90`
+
+### Event: `ProtocolMessageRelayed`
+```solidity
+event ProtocolMessageRelayed(
+    uint8 indexed protocolId,
+    uint32 indexed votingRoundId,
+    bool isSecureRandom,
+    bytes32 merkleRoot
+);
+```
+Emitted when a protocol message (including FDC Merkle roots) is relayed to the contract.
+
+## 3. Protocol ID for FDC
+
+**FDC Protocol ID: `200`**
+
+This is confirmed across multiple sources:
+- [Flare Developer Hub - FDC Getting Started](https://dev.flare.network/fdc/getting-started/): "Listen for the `ProtocolMessageRelayed` event with: `protocolId`: 200 (FDC protocol identifier)"
+- [flare-foundation/fdc-client](https://github.com/flare-foundation/fdc-client): "currently only 200 protocol_id is supported"
+- [flare-smart-contracts-v2 chain config](https://github.com/flare-foundation/flare-smart-contracts-v2): `"fdcProtocolId": 200` in `deployment/chain-config/coston2.json`
+- [flare-foundation/flare-systems-deployment](https://github.com/flare-foundation/flare-systems-deployment): `"fdcProtocolId": 200` in config
+
+For reference, the **FTSO protocol ID is `100`** (defined as `FTSO_PROTOCOL_ID = 100` in `FtsoV2.sol`).
+
+## Complete IRelay ABI (JSON)
+
+The full ABI is available from the npm package at [`@flarenetwork/flare-periphery-contracts`](https://www.npmjs.com/package/@flarenetwork/flare-periphery-contracts) under `coston2/artifacts/contracts/IRelay.sol/IRelay.json`. The ABI includes:
+
+- **3 events**: `ProtocolMessageRelayed`, `SigningPolicyInitialized`, `SigningPolicyRelayed`
+- **15 functions**: `feeCollectionAddress`, `getRandomNumber`, `getRandomNumberHistorical`, `getVotingRoundId`, `governanceFeeSetup`, `isFinalized`, `lastInitializedRewardEpochData`, `merkleRoots`, `protocolFeeInWei`, `relay`, `startingVotingRoundIds`, `toSigningPolicyHash`, `verify`, `verifyCustomSignature`
+
+## Usage Pattern in TypeScript
+
+Based on examples in `flare-foundation/fasset-bots` and `flare-foundation/developer-hub`:
+
+```typescript
+// Option 1: Resolve via FlareContractRegistry
+const registryAddress = "0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019";
+const relayAddress = await registry.getContractAddressByName("Relay");
+
+// Option 2: Use known address directly
+const RELAY_ADDRESS = "0x97702e350CaEda540935d92aAf213307e9069784"; // Coston2
+
+// Check if round is finalized
+const FDC_PROTOCOL_ID = 200;
+const isReady = await relay.isFinalized(FDC_PROTOCOL_ID, votingRoundId);
+
+// Read the Merkle root
+const merkleRoot = await relay.merkleRoots(FDC_PROTOCOL_ID, votingRoundId);
+
+// Convert timestamp to voting round ID
+const votingRoundId = await relay.getVotingRoundId(timestamp);
+// Or calculate locally: votingRoundId = (timestamp - 1658430000) / 90
+```
+
+## Other Relevant Contract Addresses on Coston2
+
+From the fdc-client configuration:
+- **FDC Contract**: `0x48aC463d7975828989331F4De43341627b9c5f1D`
+- **Submit Contract**: `0x2cA6571Daa15ce734Bbd0Bf27D5C9D16787fc33f`
+- **Voter Registry**: `0xc6E40401395DCc648bC4bBb38fE4552423cD9BAC`
+- **FdcHub (Coston)**: `0x1c78A073E3BD2aCa4cc327d55FB0cD4f0549B55b`
+- **FlareContractRegistry** (all networks): `0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019`
+
+## Key Timing Parameters
+
+- **Initial timestamp (t0)**: `1658430000` (Unix timestamp, July 21, 2022)
+- **Voting epoch duration**: 90 seconds
+- **Voting round ID formula**: `(timestamp - 1658430000) / 90`
+
+Sources:
+- [Flare Developer Hub - FDC Overview](https://dev.flare.network/fdc/overview)
+- [Flare Developer Hub - FDC Getting Started](https://dev.flare.network/fdc/getting-started/)
+- [Flare Developer Hub - FDC by Hand](https://dev.flare.network/fdc/guides/fdc-by-hand/)
+- [flare-foundation/fdc-client](https://github.com/flare-foundation/fdc-client)
+- [flare-foundation/flare-smart-contracts-v2](https://github.com/flare-foundation/flare-smart-contracts-v2) (IRelay.sol at `contracts/userInterfaces/IRelay.sol`)
+- [flare-foundation/flare-npm-periphery-package](https://github.com/flare-foundation/flare-npm-periphery-package) (IRelay ABI JSON)
+- [flare-foundation/developer-hub](https://github.com/flare-foundation/developer-hub) (IRelay Solidity reference docs)
+- [flare-foundation/flare-solidity-periphery-package-mirror](https://github.com/flare-foundation/flare-solidity-periphery-package-mirror)
+- [flare-foundation/flare-hardhat-starter](https://github.com/flare-foundation/flare-hardhat-starter) (cross-chain FDC deployment examples)
+- [Coston2 Block Explorer](https://coston2-explorer.flare.network/)</result>
+<usage>total_tokens: 70041
+tool_uses: 76
+duration_ms: 459558</usage>
+</task-notification>
+Full transcript available at: /tmp/claude-1000/-home-tom-dev-oasis-flare-poc/tasks/a66aa6b.output
+
+---
+
+the coston2 pk is funded for flare sapphire testnet and sepolia. you can create your own tx by sending yourself 0.0001 eth
+
+---
+
+update readme also root readme
+
+---
+
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Analysis:
+Let me chronologically analyze the conversation:
+
+1. **Initial request**: User said "go in trustless merkle" after a /clear command. This meant they wanted to work in the `fdc-trustless-merkle/` subdirectory.
+
+2. **Second request**: "start imple task from bd, keep openspec in sync" — User wanted to implement tasks from beads (bd) issue tracker and keep the OpenSpec change artifacts in sync.
+
+3. I discovered:
+   - 7 ready tasks: 4 P1 research (r01-r04) and 3 P2 setup (s01-s03)
+   - OpenSpec change existed at `openspec/changes/fdc-trustless-merkle/` with all artifacts (proposal, design, specs, tasks.md, .openspec.yaml)
+   - The existing PoC at `src/poc.ts` had useful patterns to reuse
+
+4. I launched two research agents in parallel while working on setup tasks myself.
+
+5. **Setup tasks (s01-s03)**: Created package.json, tsconfig.json, hardhat.config.cts (renamed from .ts due to ESM conflict), .env.example. Installed dependencies. Had to fix ESM+Hardhat config issue (renamed .ts to .cts, changed import to require for hardhat-toolbox).
+
+6. **Research findings**:
+   - r01: Leaf = `keccak256(abi.encode(response))` — full Response struct
+   - r02: Relay API: `merkleRoots(protocolId, votingRoundId)`, FDC protocolId=200, FlareContractRegistry at `0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019`
+   - r03: Proof is flat `bytes32[]`, one sibling per level
+   - r04: Sorted pairs (OpenZeppelin commutativeKeccak256)
+
+7. **Contract implementation (c01-c07)**: Wrote `FdcAccountingTrustless.sol` with all functions. Compiled clean with Hardhat.
+
+8. **Backend implementation (b01-b05)**: Wrote `scripts/deploy.ts` and `scripts/relay.ts`. Typechecked clean.
+
+9. **Third user request**: "the coston2 pk is funded for flare sapphire testnet and sepolia. you can create your own tx by sending yourself 0.0001 eth" — User wanted me to run the full integration test.
+
+10. I created a send-deposit.ts script but the Sepolia RPC failed.
+
+11. **Fourth user request**: "integate the self sending and getting tx into the script" — User wanted the self-send integrated into relay.ts instead of a separate script.
+
+12. I rewrote relay.ts to include: auto-deploy, Sepolia self-transfer, attestation, proof waiting, root sync, proof verification. Used multiple Sepolia RPCs for resilience.
+
+13. **Full integration test ran successfully**:
+    - Deployed to Sapphire: `0xC32147bB38A7a1204E76b8b8485694F5E30816bA`
+    - Sent 0.0001 ETH on Sepolia
+    - FDC attestation in voting round 1249831
+    - Proof available in ~120s
+    - Root synced from Coston2 Relay to Sapphire
+    - verifyAndCredit succeeded on Sapphire
+    - Balance reads 0 (known Sapphire SDK limitation for confidential eth_call)
+
+14. Edge case tests (t02, t03) passed: "Wrong receiver" and "Unauthorized" reverts.
+
+15. **Fifth user request**: "update readme also root readme" — User wanted README updates.
+
+16. I created `fdc-trustless-merkle/README.md` but hadn't yet updated the root README when the summary was requested.
+
+Key errors:
+- Hardhat ESM config: renamed .ts to .cts, changed `import` to `require` for hardhat-toolbox
+- Sepolia RPC down: added fallback RPCs list
+- bd close flag: used `-r` not `--comment` for close reason
+- Used TaskCreate/TaskUpdate alongside bd (should have used only bd per beads instructions)
+
+Files created/modified:
+- fdc-trustless-merkle/package.json
+- fdc-trustless-merkle/tsconfig.json
+- fdc-trustless-merkle/hardhat.config.cts
+- fdc-trustless-merkle/.env.example
+- fdc-trustless-merkle/.env (from root COSTON2_PK)
+- fdc-trustless-merkle/contracts/FdcAccountingTrustless.sol
+- fdc-trustless-merkle/scripts/deploy.ts
+- fdc-trustless-merkle/scripts/relay.ts (rewritten to include self-send + deploy)
+- fdc-trustless-merkle/scripts/test-edge-cases.ts
+- fdc-trustless-merkle/README.md (created)
+- openspec/changes/fdc-trustless-merkle/tasks.md (updated checkboxes)
+- memory/MEMORY.md (updated with research findings)
+- Root README.md (NOT YET UPDATED - pending)
+
+Summary:
+1. Primary Request and Intent:
+   - User wanted to work in `fdc-trustless-merkle/` subdirectory and implement all tasks from beads (`bd`) issue tracker while keeping OpenSpec artifacts (`openspec/changes/fdc-trustless-merkle/tasks.md`) in sync.
+   - User later requested the integration test be run with the funded COSTON2_PK key, creating a Sepolia self-transfer as test data.
+   - User requested the self-send and deploy logic be integrated directly into `relay.ts` rather than separate scripts.
+   - User's final request was to "update readme also root readme" — create a README for the trustless-merkle subproject and update the root README.
+
+2. Key Technical Concepts:
+   - **FDC (Flare Data Connector)**: Cross-chain attestation system. Attestation requests go to Coston2's FdcHub, proofs come from the DA layer.
+   - **Merkle leaf encoding**: `keccak256(abi.encode(response))` where response is the full `IEVMTransaction.Response` struct. Uses standard `abi.encode` (padded), NOT `abi.encodePacked`.
+   - **Merkle proof convention**: Sorted pairs (OpenZeppelin `commutativeKeccak256`) — `min(a,b) || max(a,b)` then keccak256. Proof is flat `bytes32[]`.
+   - **Relay contract**: `merkleRoots(protocolId, votingRoundId)` returns `bytes32`. FDC protocolId = 200. Address resolved via FlareContractRegistry at `0xaD67FE66660Fb8dFE9d6b1b4240d8650e30F6019`.
+   - **Sapphire confidential storage**: Private `mapping` variables can't be read via plain `eth_call` without `@oasisprotocol/sapphire-paratime` SDK wrapper. Write transactions work fine.
+   - **Three-chain architecture**: Sepolia (deposits) → Coston2 (FDC attestation + Relay roots) → Sapphire (on-chain Merkle verification + private balances).
+   - **Beads (bd)** for issue tracking, **OpenSpec** for planning artifacts — kept in sync throughout.
+
+3. Files and Code Sections:
+
+   - **`fdc-trustless-merkle/package.json`** — Project manifest with ESM (`"type": "module"`), scripts for compile/deploy/relay/typecheck. Dependencies: ethers v6, hardhat, flare-tx-sdk, dotenv.
+
+   - **`fdc-trustless-merkle/tsconfig.json`** — TypeScript config targeting ES2022/NodeNext, includes `scripts/**/*`, excludes artifacts/cache.
+
+   - **`fdc-trustless-merkle/hardhat.config.cts`** — Hardhat config using `.cts` extension (CJS) because `"type": "module"` in package.json conflicts with Hardhat's ts-node CJS loader. Uses `require()` for hardhat-toolbox.
+     ```typescript
+     import type { HardhatUserConfig } from "hardhat/config";
+     require("@nomicfoundation/hardhat-toolbox");
+     const config: HardhatUserConfig = {
+       solidity: "0.8.24",
+       paths: { sources: "./contracts", artifacts: "./artifacts", cache: "./cache" },
+     };
+     export default config;
+     ```
+
+   - **`fdc-trustless-merkle/.env.example`** — Template with COSTON2_PK, SAPPHIRE_PK, SEPOLIA_TX_HASH, DEPOSIT_ADDRESS, and commented CONTRACT_ADDRESS.
+
+   - **`fdc-trustless-merkle/contracts/FdcAccountingTrustless.sol`** — The core Solidity contract (~150 lines). Key functions:
+     - `constructor(address _rootRelayer, address _depositAddress)` — immutable config
+     - `syncRoot(uint64 votingRound, bytes32 merkleRoot)` — authorized write-once root storage
+     - `verifyAndCredit(bytes32[] calldata merkleProof, Response calldata response)` — replay protection, deposit validation, Merkle proof verification, balance crediting
+     - `getBalance()` — private balance query via `msg.sender`
+     - `_verifyMerkleProof(bytes32[] calldata proof, bytes32 root, bytes32 leaf)` — sorted-pair binary walk
+     - Structs: `Response`, `RequestBody`, `ResponseBody`, `Event` — match FdcVerification's EVMTransaction structs exactly
+     ```solidity
+     function verifyAndCredit(bytes32[] calldata merkleProof, Response calldata response) external {
+         bytes32 txHash = response.requestBody.transactionHash;
+         require(!processed[txHash], "Already processed");
+         require(response.responseBody.status == 1, "Tx not successful");
+         require(response.responseBody.receivingAddress == depositAddress, "Wrong receiver");
+         require(response.responseBody.value > 0, "Zero value");
+         bytes32 root = roots[response.votingRound];
+         require(root != bytes32(0), "Root not synced for this round");
+         bytes32 leaf = keccak256(abi.encode(response));
+         require(_verifyMerkleProof(merkleProof, root, leaf), "Invalid Merkle proof");
+         processed[txHash] = true;
+         balances[response.responseBody.sourceAddress] += response.responseBody.value;
+         emit DepositCredited(response.responseBody.sourceAddress, response.responseBody.value, txHash);
+     }
+     ```
+
+   - **`fdc-trustless-merkle/scripts/deploy.ts`** — Standalone deploy script for Sapphire testnet. Loads artifact, deploys with `sapphireSigner.address` as relayer.
+
+   - **`fdc-trustless-merkle/scripts/relay.ts`** — Full end-to-end orchestration (rewritten to be self-contained):
+     - Step 0: Deploy contract if `CONTRACT_ADDRESS` not in `.env` (auto-saves to .env)
+     - Step 1: Send 0.0001 ETH self-transfer on Sepolia (with RPC failover across 3 endpoints)
+     - Step 2: Request FDC attestation on Coston2 (prepareRequest + submitAttestation)
+     - Step 3: Wait for proof from DA layer (~95s initial wait + polling)
+     - Step 4: Sync Merkle root from Coston2 Relay to Sapphire contract
+     - Step 5: Submit proof to `verifyAndCredit` on Sapphire
+     - Step 6: Display balance before/after
+     - Key constants: `FDC_PROTOCOL_ID = 200`, `DEPOSIT_AMOUNT = 0.0001 ETH`, voting round timing
+     - Uses FlareContractRegistry to resolve Relay address dynamically
+
+   - **`fdc-trustless-merkle/scripts/test-edge-cases.ts`** — Tests replay protection (dummy proof → "Wrong receiver" revert) and unauthorized root sync (random wallet → "Unauthorized" revert).
+
+   - **`fdc-trustless-merkle/README.md`** — Created with architecture diagram, setup instructions, known limitations (Sapphire SDK for balance reads), contract addresses.
+
+   - **`openspec/changes/fdc-trustless-merkle/tasks.md`** — Updated throughout: all 37 task checkboxes now marked `[x]` complete.
+
+   - **`/home/tom/.claude/projects/-home-tom-dev-oasis-flare-poc/memory/MEMORY.md`** — Updated with FDC technical details (leaf encoding, Merkle convention, Relay API, protocol IDs, FlareContractRegistry address) and beads info for fdc-trustless-merkle.
+
+   - **Root `README.md`** — Read but NOT YET UPDATED. This is the pending task.
+
+4. Errors and fixes:
+   - **Hardhat ESM config conflict**: `hardhat.config.ts` with `"type": "module"` in package.json caused `Error HH19`. Fixed by renaming to `.cts` and changing `import "@nomicfoundation/hardhat-toolbox"` to `require("@nomicfoundation/hardhat-toolbox")`.
+   - **`bd close --comment` flag doesn't exist**: Got "unknown flag: --comment". Fixed by using `-r` (reason) flag instead: `bd close <id> -r "reason"`.
+   - **Sepolia RPC `rpc.sepolia.org` returned 522**: Fixed by adding a list of fallback RPCs (`SEPOLIA_RPCS` array) with `getSepoliaProvider()` that tries each in sequence.
+   - **Separate send-deposit.ts script**: User explicitly asked to integrate the self-send into `relay.ts` instead. Removed standalone script, rewrote relay.ts with `sendDeposit()` and `ensureDeployed()` functions.
+   - **Balance reads 0 after successful verifyAndCredit**: Known Sapphire limitation — confidential `eth_call` without `@oasisprotocol/sapphire-paratime` SDK can't authenticate `msg.sender`. Not a verification issue, just a display issue.
+
+5. Problem Solving:
+   - Parallelized research (2 background agents) with setup work to maximize efficiency.
+   - Implemented all contract tasks (c01-c07) as a single file since the contract is ~150 lines.
+   - Implemented all backend tasks (b01-b05) as two files (deploy.ts + relay.ts).
+   - All 22 beads issues closed (from 0 to 22/22 in one session).
+   - Integration test passed end-to-end across 3 live testnets.
+   - Deployed contract address: `0xC32147bB38A7a1204E76b8b8485694F5E30816bA` on Sapphire testnet.
+
+6. All user messages:
+   - "go in trustless merkle" (after /clear)
+   - "start imple task from bd, keep openspec in sync"
+   - "the coston2 pk is funded for flare sapphire testnet and sepolia. you can create your own tx by sending yourself 0.0001 eth"
+   - "integate the self sending and getting tx into the script" (sent while relay.ts was running the first Sepolia RPC attempt)
+   - "update readme also root readme"
+
+7. Pending Tasks:
+   - **Update root README.md** — User explicitly requested "update readme also root readme". The `fdc-trustless-merkle/README.md` was created, but the root `README.md` at `/home/tom/dev/oasis/flare-poc/README.md` has NOT been updated yet to reference the new trustless-merkle subsystem.
+   - **Session close protocol** — Per beads workflow instructions: `git status`, `git add`, `bd sync`, `git commit`, `git push`. This has NOT been done yet.
+
+8. Current Work:
+   The user's most recent request was "update readme also root readme". I created `fdc-trustless-merkle/README.md` successfully but had NOT yet updated the root `README.md` at `/home/tom/dev/oasis/flare-poc/README.md` to add a section about the fdc-trustless-merkle subsystem. The root README currently only describes the original FDC PoC (`src/poc.ts`).
+
+9. Optional Next Step:
+   Update the root `README.md` to add a section referencing the `fdc-trustless-merkle/` subsystem, then run the session close protocol (git add, bd sync, git commit, git push). The user's exact request was: **"update readme also root readme"** — the "root readme" part is still pending.
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: /home/tom/.REDACTED.jsonl
+Please continue the conversation from where we left off without asking the user any further questions. Continue with the last task that you were asked to work on.
+
+---
+
+change implemented, can it be archived in openspec?
+
+---
+
+Base directory for this skill: /home/tom/dev/oasis/flare-poc/.claude/skills/openspec-archive-change
+
+Archive a completed change in the experimental workflow.
+
+**Input**: Optionally specify a change name. If omitted, check if it can be inferred from conversation context. If vague or ambiguous you MUST prompt for available changes.
+
+**Steps**
+
+1. **If no change name provided, prompt for selection**
+
+   Run `openspec list --json` to get available changes. Use the **AskUserQuestion tool** to let the user select.
+
+   Show only active changes (not already archived).
+   Include the schema used for each change if available.
+
+   **IMPORTANT**: Do NOT guess or auto-select a change. Always let the user choose.
+
+2. **Check artifact completion status**
+
+   Run `openspec status --change "<name>" --json` to check artifact completion.
+
+   Parse the JSON to understand:
+   - `schemaName`: The workflow being used
+   - `artifacts`: List of artifacts with their status (`done` or other)
+
+   **If any artifacts are not `done`:**
+   - Display warning listing incomplete artifacts
+   - Use **AskUserQuestion tool** to confirm user wants to proceed
+   - Proceed if user confirms
+
+3. **Check task completion status**
+
+   Read the tasks file (typically `tasks.md`) to check for incomplete tasks.
+
+   Count tasks marked with `- [ ]` (incomplete) vs `- [x]` (complete).
+
+   **If incomplete tasks found:**
+   - Display warning showing count of incomplete tasks
+   - Use **AskUserQuestion tool** to confirm user wants to proceed
+   - Proceed if user confirms
+
+   **If no tasks file exists:** Proceed without task-related warning.
+
+4. **Assess delta spec sync state**
+
+   Check for delta specs at `openspec/changes/<name>/specs/`. If none exist, proceed without sync prompt.
+
+   **If delta specs exist:**
+   - Compare each delta spec with its corresponding main spec at `openspec/specs/<capability>/spec.md`
+   - Determine what changes would be applied (adds, modifications, removals, renames)
+   - Show a combined summary before prompting
+
+   **Prompt options:**
+   - If changes needed: "Sync now (recommended)", "Archive without syncing"
+   - If already synced: "Archive now", "Sync anyway", "Cancel"
+
+   If user chooses sync, execute /opsx:sync logic (use the openspec-sync-specs skill). Proceed to archive regardless of choice.
+
+5. **Perform the archive**
+
+   Create the archive directory if it doesn't exist:
+   ```bash
+   mkdir -p openspec/changes/archive
+   ```
+
+   Generate target name using current date: `YYYY-MM-DD-<change-name>`
+
+   **Check if target already exists:**
+   - If yes: Fail with error, suggest renaming existing archive or using different date
+   - If no: Move the change directory to archive
+
+   ```bash
+   mv openspec/changes/<name> openspec/changes/archive/YYYY-MM-DD-<name>
+   ```
+
+6. **Display summary**
+
+   Show archive completion summary including:
+   - Change name
+   - Schema that was used
+   - Archive location
+   - Whether specs were synced (if applicable)
+   - Note about any warnings (incomplete artifacts/tasks)
+
+**Output On Success**
+
+```
+## Archive Complete
+
+**Change:** <change-name>
+**Schema:** <schema-name>
+**Archived to:** openspec/changes/archive/YYYY-MM-DD-<name>/
+**Specs:** ✓ Synced to main specs (or "No delta specs" or "Sync skipped")
+
+All artifacts complete. All tasks complete.
+```
+
+**Guardrails**
+- Always prompt for change selection if not provided
+- Use artifact graph (openspec status --json) for completion checking
+- Don't block archive on warnings - just inform and confirm
+- Preserve .openspec.yaml when moving to archive (it moves with the directory)
+- Show clear summary of what happened
+- If sync is requested, use openspec-sync-specs approach (agent-driven)
+- If delta specs exist, always run the sync assessment and show the combined summary before prompting
+
+
+ARGUMENTS: fdc-trustless-merkle
+
+---
+
+commit and push
+
+---
+
+lets implement also the withdrawal, use same logic as flexvaults-test.
+create encumbered wallet, add getdeposit in contract to get the encumbered wallet which is the deposti address. then run the flow, in the end withdraw back to the user, by creating tx for encumbered wallet and broadcasting the tx
+
+---
+
+[Request interrupted by user for tool use]
